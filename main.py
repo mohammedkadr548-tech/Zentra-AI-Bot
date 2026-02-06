@@ -1,4 +1,3 @@
-
 import telebot
 import time
 import io
@@ -9,7 +8,7 @@ from rembg import remove
 # 🔑 الإعدادات
 # =========================
 BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
-ADMIN_ID = 123456789  # ضع Telegram ID الخاص بك
+8587162325:AAEvA3W-SVzmtM-ZO6VuTYeZyOo-C8_2hWg
 
 bot = telebot.TeleBot(BOT_TOKEN)
 START_TIME = time.time()
