@@ -9,7 +9,7 @@ from rembg import remove
 # الإعدادات
 # ======================
 BOT_TOKEN = os.getenv("BOT_TOKEN")  # التوكن من السيرفر فقط
-ADMIN_ID = 123456789  # ⬅️ ضع ID الخاص بك هنا (أرقام فقط)
+ADMIN_ID = 326193841  # ⬅️ ضع ID الخاص بك هنا (أرقام فقط)
 
 bot = telebot.TeleBot(BOT_TOKEN)
 START_TIME = time.time()
