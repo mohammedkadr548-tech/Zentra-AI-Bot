@@ -8,7 +8,7 @@ from rembg import remove
 # 🔑 الإعدادات
 # =========================
 BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
-8587162325:AAEvA3W-SVzmtM-ZO6VuTYeZyOo-C8_2hWg
+8587162325:AAEvA3W-SVzmtM-ZO6VuTYeZyOo-C8_2hhuWg
 
 bot = telebot.TeleBot(BOT_TOKEN)
 START_TIME = time.time()
