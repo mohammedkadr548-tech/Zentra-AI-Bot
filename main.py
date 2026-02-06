@@ -1,89 +1,90 @@
+import os
 import telebot
 import time
-import os
 import io
 from PIL import Image
 from rembg import remove
 
-# ======================
-# الإعدادات
-# ======================
-
-BOT_TOKEN = os.getenv("BOT_TOKEN")  # التوكن من السيرفر (Railway)
-ADMIN_ID = 123456789  # ❗️ ضع هنا رقم Telegram ID الخاص بك
-
+# =========================
+# Environment
+# =========================
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 bot = telebot.TeleBot(BOT_TOKEN)
+
 START_TIME = time.time()
 
-# ======================
-# رسالة البدء
-# ======================
-
+# =========================
+# /start
+# =========================
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.reply_to(
-        message,
-        "🤖 *Zentra AI Bot (نسخة تجريبية)*\n\n"
-        "🧮 جمع رقمين:\n"
-        "مثال: `3+19`\n\n"
-        "🖼️ إزالة خلفية الصور:\n"
-        "أرسل صورة فقط\n\n"
-        "⏱️ البوت يعمل 24/7",
-        parse_mode="Markdown"
+    chat_id = message.chat.id
+    bot.send_message(
+        chat_id,
+        "👋 Welcome to Zentra AI (Beta)\n"
+        "أهلاً بك في Zentra AI (نسخة تجريبية)\n\n"
+        "➕ Math example / مثال حسابي:\n"
+        "3+19\n\n"
+        "🖼 Send an image to remove background\n"
+        "📸 أرسل صورة لإزالة الخلفية\n\n"
+        "⏱ Bot works 24/7"
     )
 
-# ======================
-# جمع رقمين فقط
-# ======================
-
-@bot.message_handler(func=lambda m: m.text and '+' in m.text)
+# =========================
+# Math (simple addition)
+# =========================
+@bot.message_handler(func=lambda m: '+' in m.text)
 def add_numbers(message):
+    chat_id = message.chat.id
     try:
         a, b = message.text.split('+')
         result = int(a.strip()) + int(b.strip())
-        bot.reply_to(message, f"✅ النتيجة: {result}")
+        bot.send_message(
+            chat_id,
+            f"✅ Result / النتيجة: {result}"
+        )
     except:
-        bot.reply_to(
-            message,
-            "❌ صيغة غير صحيحة\n"
-            "اكتب هكذا:\n"
-            "3+19"
+        bot.send_message(
+            chat_id,
+            "❌ Invalid format / صيغة غير صحيحة\n"
+            "Example / مثال: 3+19"
         )
 
-# ======================
-# أمر المراقبة (لك فقط)
-# ======================
-
+# =========================
+# Status (admin later)
+# =========================
 @bot.message_handler(commands=['status'])
 def status(message):
-    if message.from_user.id != ADMIN_ID:
-        return
-
+    chat_id = message.chat.id
     uptime = int(time.time() - START_TIME)
     hours = uptime // 3600
     minutes = (uptime % 3600) // 60
 
-    bot.reply_to(
-        message,
-        f"📊 *Zentra AI Status*\n\n"
-        f"⏱️ Uptime: {hours}h {minutes}m\n"
-        f"✅ Bot is running normally",
-        parse_mode="Markdown"
+    bot.send_message(
+        chat_id,
+        f"📊 Zentra AI Status\n"
+        f"⏱ Uptime: {hours}h {minutes}m\n"
+        f"✅ Bot is running normally"
     )
 
-# ======================
-# إزالة خلفية الصور
-# ======================
-
+# =========================
+# Background Removal (Transparent PNG)
+# =========================
 @bot.message_handler(content_types=['photo'])
 def remove_background(message):
-    msg = bot.reply_to(message, "🧠 جاري إزالة الخلفية...")
+    chat_id = message.chat.id
+
+    bot.send_message(
+        chat_id,
+        "🧠 Removing background...\n"
+        "جاري إزالة الخلفية..."
+    )
 
     try:
         file_info = bot.get_file(message.photo[-1].file_id)
-        downloaded_file = bot.download_file(file_info.file_path)
+        downloaded = bot.download_file(file_info.file_path)
 
-        input_image = Image.open(io.BytesIO(downloaded_file))
+        input_image = Image.open(io.BytesIO(downloaded)).convert("RGBA")
         output_image = remove(input_image)
 
         output_buffer = io.BytesIO()
@@ -91,16 +92,20 @@ def remove_background(message):
         output_buffer.seek(0)
 
         bot.send_photo(
-            message.chat.id,
+            chat_id,
             output_buffer,
-            caption="✅ تم إزالة الخلفية بنجاح"
+            caption="✅ Background removed successfully\n"
+                    "✅ تم إزالة الخلفية بنجاح"
         )
+
     except Exception as e:
-        bot.reply_to(message, "❌ حدث خطأ أثناء معالجة الصورة")
+        bot.send_message(
+            chat_id,
+            "❌ Failed to process image\n"
+            "❌ فشل معالجة الصورة"
+        )
 
-# ======================
-# تشغيل البوت
-# ======================
-
-print("🤖 Zentra AI Bot is running...")
+# =========================
+# Run
+# =========================
 bot.infinity_polling()
