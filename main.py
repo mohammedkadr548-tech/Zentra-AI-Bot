@@ -1,46 +1,102 @@
-import os
-import re
-from telegram import Update
-from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, CommandHandler, filters
 
-# Read token from environment variable
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+import telebot
+import time
+import io
+from PIL import Image
+from rembg import remove
 
-# Start command
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🤖 Zentra AI Bot\n\n"
-        "🇦🇪 أرسل عملية جمع مثل: 2+3\n"
-        "🇬🇧 Send an addition like: 2+3"
+# =========================
+# 🔑 الإعدادات
+# =========================
+BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
+ADMIN_ID = 123456789  # ضع Telegram ID الخاص بك
+
+bot = telebot.TeleBot(BOT_TOKEN)
+START_TIME = time.time()
+
+# =========================
+# 🟢 رسالة البدء
+# =========================
+@bot.message_handler(commands=['start'])
+def start(message):
+    bot.reply_to(
+        message,
+        "👋 مرحبًا بك في Zentra AI (نسخة تجريبية)\n\n"
+        "➕ اكتب عملية جمع مثل:\n"
+        "3+19\n\n"
+        "🖼 أرسل صورة لإزالة الخلفية\n\n"
+        "🚀 البوت يعمل 24/7"
     )
 
-# Handle messages
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.replace(" ", "")
-
-    # Match simple addition مثل 2+3
-    match = re.fullmatch(r"(\d+)\+(\d+)", text)
-
-    if match:
-        a = int(match.group(1))
-        b = int(match.group(2))
-        result = a + b
-        await update.message.reply_text(f"✅ Result / النتيجة: {result}")
-    else:
-        await update.message.reply_text(
-            "❌ صيغة غير صحيحة\n"
-            "اكتب مثل: 4+5\n"
-            "Write like: 4+5"
+# =========================
+# ➕ جمع رقمين
+# =========================
+@bot.message_handler(func=lambda m: m.text and '+' in m.text)
+def add_numbers(message):
+    try:
+        a, b = message.text.split('+')
+        result = int(a.strip()) + int(b.strip())
+        bot.reply_to(message, f"✅ النتيجة: {result}")
+    except:
+        bot.reply_to(
+            message,
+            "❌ الصيغة غير صحيحة\n"
+            "اكتبها هكذا:\n"
+            "3+19"
         )
 
-def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+# =========================
+# 📊 أمر المراقبة (لك فقط)
+# =========================
+@bot.message_handler(commands=['status'])
+def status(message):
+    if message.from_user.id != ADMIN_ID:
+        return
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    uptime = int(time.time() - START_TIME)
+    hours = uptime // 3600
+    minutes = (uptime % 3600) // 60
 
-    print("Zentra AI Bot is running...")
-    app.run_polling()
+    bot.reply_to(
+        message,
+        f"🤖 Zentra AI Status\n"
+        f"⏱ Uptime: {hours}h {minutes}m\n"
+        f"✅ Bot is running normally"
+    )
 
-if __name__ == "__main__":
-    main()
+# =========================
+# 🖼 إزالة خلفية الصور
+# =========================
+@bot.message_handler(content_types=['photo'])
+def remove_background(message):
+    msg = bot.reply_to(message, "🧠 جارٍ إزالة الخلفية...")
+
+    try:
+        file_info = bot.get_file(message.photo[-1].file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+
+        input_image = Image.open(io.BytesIO(downloaded_file))
+        output_image = remove(input_image)
+
+        bio = io.BytesIO()
+        output_image.save(bio, format="PNG")
+        bio.seek(0)
+
+        bot.send_photo(
+            message.chat.id,
+            bio,
+            caption="✅ تم إزالة الخلفية بنجاح"
+        )
+
+    except Exception as e:
+        bot.edit_message_text(
+            "❌ حدث خطأ أثناء معالجة الصورة",
+            message.chat.id,
+            msg.message_id
+        )
+
+# =========================
+# 🚀 تشغيل البوت
+# =========================
+print("Zentra AI Bot is running...")
+bot.infinity_polling()
