@@ -9,27 +9,27 @@ from rembg import remove
 # الإعدادات
 # ======================
 BOT_TOKEN = os.getenv("BOT_TOKEN")  # التوكن من السيرفر فقط
-ADMIN_ID = 326193841  # ⬅️ ضع ID الخاص بك هنا (أرقام فقط)
+ADMIN_ID = 326193841  # ⬅️ ضع ID الخاص بك (أرقام فقط)
+ADMIN_SECRET = "#zentra_admin"  # كلمة المراقبة السرية
 
-bot = telebot.TeleBot(BOT_TOKEN)
+bot = telebot.TeleBot(BOT_TOKEN, parse_mode="Markdown")
 START_TIME = time.time()
 
 # ======================
-# رسالة البدء
+# رسالة البدء (بدون ذكر أي اسم)
 # ======================
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.reply_to(
-        message,
-        "👋 Welcome to *Zentra AI* (Test Version)\n\n"
+    bot.send_message(
+        message.chat.id,
+        "👋 *Zentra AI – Test Version*\n\n"
         "➕ Send math like: `3+9`\n"
         "🖼 Send an image to remove background\n"
         "⏱ Bot works 24/7\n\n"
-        "👋 مرحبًا بك في *Zentra AI* (نسخة تجريبية)\n"
+        "👋 *Zentra AI – نسخة تجريبية*\n"
         "➕ أرسل عملية جمع مثل: `3+9`\n"
         "🖼 أرسل صورة لإزالة الخلفية\n"
-        "⏱ البوت يعمل 24/7",
-        parse_mode="Markdown"
+        "⏱ البوت يعمل 24/7"
     )
 
 # ======================
@@ -40,14 +40,15 @@ def add_numbers(message):
     try:
         a, b = message.text.split('+')
         result = int(a.strip()) + int(b.strip())
-        bot.reply_to(message, f"✅ Result / النتيجة: {result}")
+        bot.send_message(
+            message.chat.id,
+            f"✅ Result / النتيجة: {result}"
+        )
     except:
-        bot.reply_to(
-            message,
-            "❌ Invalid format\n"
-            "Example: 3+9\n\n"
-            "❌ صيغة غير صحيحة\n"
-            "مثال: 3+9"
+        bot.send_message(
+            message.chat.id,
+            "❌ Invalid format\nExample: 3+9\n\n"
+            "❌ صيغة غير صحيحة\nمثال: 3+9"
         )
 
 # ======================
@@ -55,13 +56,13 @@ def add_numbers(message):
 # ======================
 @bot.message_handler(content_types=['photo'])
 def remove_background(message):
-    msg = bot.reply_to(
-        message,
-        "🧠 Removing background...\n"
-        "جاري إزالة الخلفية..."
-    )
-
     try:
+        bot.send_message(
+            message.chat.id,
+            "🧠 Removing background...\n"
+            "جاري إزالة الخلفية..."
+        )
+
         file_info = bot.get_file(message.photo[-1].file_id)
         downloaded_file = bot.download_file(file_info.file_path)
 
@@ -78,27 +79,42 @@ def remove_background(message):
             visible_file_name="zentra_ai.png",
             caption="✅ Background removed successfully\nتمت إزالة الخلفية بنجاح"
         )
-    except Exception as e:
-        bot.reply_to(message, "❌ Error processing image")
+
+    except:
+        bot.send_message(
+            message.chat.id,
+            "❌ Error processing image\nحدث خطأ أثناء معالجة الصورة"
+        )
 
 # ======================
-# أمر المراقبة السري
+# نظام المراقبة السري (بدون ظهور أي اسم)
 # ======================
-@bot.message_handler(commands=['status'])
-def status(message):
+@bot.message_handler(func=lambda m: m.text == ADMIN_SECRET)
+def admin_status(message):
     if message.from_user.id != ADMIN_ID:
         return
+
+    # حذف رسالة الأدمن فورًا (لا اسم – لا أثر)
+    try:
+        bot.delete_message(message.chat.id, message.message_id)
+    except:
+        pass
 
     uptime = int(time.time() - START_TIME)
     hours = uptime // 3600
     minutes = (uptime % 3600) // 60
 
-    bot.reply_to(
-        message,
-        f"📊 Zentra AI Status\n"
+    status_text = (
+        "📊 *Zentra AI Status*\n\n"
+        "🇸🇦 الحالة:\n"
+        f"⏱ مدة التشغيل: {hours} ساعة {minutes} دقيقة\n"
+        "✅ البوت يعمل بشكل طبيعي\n\n"
+        "🇬🇧 Status:\n"
         f"⏱ Uptime: {hours}h {minutes}m\n"
-        f"✅ Bot is running normally"
+        "✅ Bot is running normally"
     )
+
+    bot.send_message(message.chat.id, status_text)
 
 # ======================
 # تشغيل البوت
