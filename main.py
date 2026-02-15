@@ -1,123 +1,157 @@
 import telebot
+from telebot import types
+import sqlite3
 import time
-import io
-import os
-from PIL import Image
-from rembg import remove
+import threading
+from flask import Flask, request, jsonify
+import hmac, hashlib
 
-# ======================
+# =====================
 # الإعدادات
-# ======================
-BOT_TOKEN = os.getenv("BOT_TOKEN")  # التوكن من السيرفر فقط
-ADMIN_ID = 326193841  # ⬅️ ضع ID الخاص بك (أرقام فقط)
-ADMIN_SECRET = "#zentra_admin"  # كلمة المراقبة السرية
+# =====================
+BOT_TOKEN = "PUT_YOUR_BOT_TOKEN"
+NOWPAYMENTS_IPN_KEY = "PUT_NOWPAYMENTS_IPN_KEY"
 
-bot = telebot.TeleBot(BOT_TOKEN, parse_mode="Markdown")
+bot = telebot.TeleBot(BOT_TOKEN)
+app = Flask(__name__)
 START_TIME = time.time()
 
-# ======================
-# رسالة البدء (بدون ذكر أي اسم)
-# ======================
-@bot.message_handler(commands=['start'])
+# =====================
+# قاعدة البيانات
+# =====================
+conn = sqlite3.connect("bot.db", check_same_thread=False)
+c = conn.cursor()
+
+c.execute("""
+CREATE TABLE IF NOT EXISTS users (
+    user_id INTEGER PRIMARY KEY,
+    is_subscribed INTEGER DEFAULT 0,
+    balance REAL DEFAULT 0,
+    messages_used INTEGER DEFAULT 0,
+    created_at INTEGER
+)
+""")
+conn.commit()
+
+# =====================
+# إنشاء المستخدم
+# =====================
+def get_user(user_id):
+    c.execute("SELECT * FROM users WHERE user_id=?", (user_id,))
+    user = c.fetchone()
+    if not user:
+        c.execute("""
+            INSERT INTO users (user_id, created_at)
+            VALUES (?,?)
+        """, (user_id, int(time.time())))
+        conn.commit()
+
+# =====================
+# أزرار التفاعل
+# =====================
+def reaction_buttons():
+    kb = types.InlineKeyboardMarkup(row_width=4)
+    kb.add(
+        types.InlineKeyboardButton("👍", callback_data="like"),
+        types.InlineKeyboardButton("👎", callback_data="dislike"),
+        types.InlineKeyboardButton("📋", callback_data="copy"),
+        types.InlineKeyboardButton("🔁", callback_data="share"),
+    )
+    return kb
+
+# =====================
+# /start
+# =====================
+@bot.message_handler(commands=["start"])
 def start(message):
+    get_user(message.from_user.id)
     bot.send_message(
         message.chat.id,
-        "👋 *Zentra AI – Test Version*\n\n"
-        "➕ Send math like: `3+9`\n"
-        "🖼 Send an image to remove background\n"
-        "⏱ Bot works 24/7\n\n"
-        "👋 *Zentra AI – نسخة تجريبية*\n"
-        "➕ أرسل عملية جمع مثل: `3+9`\n"
-        "🖼 أرسل صورة لإزالة الخلفية\n"
-        "⏱ البوت يعمل 24/7"
+        "🤖 مرحبًا بك في *Zentra AI*\n\n"
+        "🧪 هذا وضع تجريبي\n"
+        "➕ أرسل عملية جمع مثل:\n"
+        "`1+1`\n\n"
+        "🚀 الميزات الكاملة قريبًا",
+        parse_mode="Markdown"
     )
 
-# ======================
-# جمع رقمين فقط
-# ======================
-@bot.message_handler(func=lambda m: m.text and '+' in m.text)
+# =====================
+# جمع الأرقام (1+1)
+# =====================
+@bot.message_handler(func=lambda m: "+" in m.text)
 def add_numbers(message):
+    get_user(message.from_user.id)
     try:
-        a, b = message.text.split('+')
+        a, b = message.text.split("+")
         result = int(a.strip()) + int(b.strip())
         bot.send_message(
             message.chat.id,
-            f"✅ Result / النتيجة: {result}"
+            f"✅ النتيجة: {result}",
+            reply_markup=reaction_buttons()
         )
     except:
         bot.send_message(
             message.chat.id,
-            "❌ Invalid format\nExample: 3+9\n\n"
-            "❌ صيغة غير صحيحة\nمثال: 3+9"
+            "❌ صيغة غير صحيحة\nمثال: 1+1",
+            reply_markup=reaction_buttons()
         )
 
-# ======================
-# إزالة الخلفية (PNG شفاف)
-# ======================
-@bot.message_handler(content_types=['photo'])
-def remove_background(message):
-    try:
-        bot.send_message(
-            message.chat.id,
-            "🧠 Removing background...\n"
-            "جاري إزالة الخلفية..."
-        )
+# =====================
+# أزرار التفاعل
+# =====================
+@bot.callback_query_handler(func=lambda call: True)
+def handle_reactions(call):
+    if call.data == "like":
+        bot.answer_callback_query(call.id, "👍 شكراً لتقييمك")
+    elif call.data == "dislike":
+        bot.answer_callback_query(call.id, "👎 تم تسجيل الملاحظة")
+    elif call.data == "copy":
+        bot.answer_callback_query(call.id, "📋 يمكنك نسخ النص يدويًا")
+    elif call.data == "share":
+        bot.answer_callback_query(call.id, "🔁 شارك البوت مع أصدقائك")
 
-        file_info = bot.get_file(message.photo[-1].file_id)
-        downloaded_file = bot.download_file(file_info.file_path)
+# =====================
+# Webhook NOWPayments
+# =====================
+@app.route("/nowpayments", methods=["POST"])
+def nowpayments_webhook():
+    data = request.json
+    signature = request.headers.get("x-nowpayments-sig")
 
-        input_image = Image.open(io.BytesIO(downloaded_file)).convert("RGBA")
-        output_image = remove(input_image)
+    sorted_data = dict(sorted(data.items()))
+    message = "&".join(f"{k}={v}" for k, v in sorted_data.items())
 
-        output_buffer = io.BytesIO()
-        output_image.save(output_buffer, format="PNG")
-        output_buffer.seek(0)
+    generated_signature = hmac.new(
+        NOWPAYMENTS_IPN_KEY.encode(),
+        message.encode(),
+        hashlib.sha512
+    ).hexdigest()
 
-        bot.send_document(
-            message.chat.id,
-            output_buffer,
-            visible_file_name="zentra_ai.png",
-            caption="✅ Background removed successfully\nتمت إزالة الخلفية بنجاح"
-        )
+    if generated_signature != signature:
+        return jsonify({"error": "invalid signature"}), 400
 
-    except:
-        bot.send_message(
-            message.chat.id,
-            "❌ Error processing image\nحدث خطأ أثناء معالجة الصورة"
-        )
+    if data.get("payment_status") == "finished":
+        user_id = int(data.get("order_id"))
+        c.execute("""
+            UPDATE users
+            SET is_subscribed=1,
+                balance=6
+            WHERE user_id=?
+        """, (user_id,))
+        conn.commit()
 
-# ======================
-# نظام المراقبة السري (بدون ظهور أي اسم)
-# ======================
-@bot.message_handler(func=lambda m: m.text == ADMIN_SECRET)
-def admin_status(message):
-    if message.from_user.id != ADMIN_ID:
-        return
+    return jsonify({"status": "ok"})
 
-    # حذف رسالة الأدمن فورًا (لا اسم – لا أثر)
-    try:
-        bot.delete_message(message.chat.id, message.message_id)
-    except:
-        pass
+# =====================
+# تشغيل Webhook
+# =====================
+def run_webhook():
+    app.run(host="0.0.0.0", port=8080)
 
-    uptime = int(time.time() - START_TIME)
-    hours = uptime // 3600
-    minutes = (uptime % 3600) // 60
+threading.Thread(target=run_webhook).start()
 
-    status_text = (
-        "📊 *Zentra AI Status*\n\n"
-        "🇸🇦 الحالة:\n"
-        f"⏱ مدة التشغيل: {hours} ساعة {minutes} دقيقة\n"
-        "✅ البوت يعمل بشكل طبيعي\n\n"
-        "🇬🇧 Status:\n"
-        f"⏱ Uptime: {hours}h {minutes}m\n"
-        "✅ Bot is running normally"
-    )
-
-    bot.send_message(message.chat.id, status_text)
-
-# ======================
+# =====================
 # تشغيل البوت
-# ======================
-print("Zentra AI bot is running...")
+# =====================
+print("Zentra AI Bot is running...")
 bot.infinity_polling()
