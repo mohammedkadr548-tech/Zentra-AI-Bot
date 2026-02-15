@@ -1,87 +1,77 @@
-import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+import os
 import re
-import time
+import telebot
+from telebot import types
 
-BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
+# قراءة التوكن من متغير البيئة
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN not found in environment variables")
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 
-START_TIME = time.time()
-TOTAL_MESSAGES = 0
-USERS = set()
 
-# ───────────────
-# /start
-# ───────────────
+# إنشاء الأزرار تحت كل رسالة
+def action_buttons(result_text):
+    markup = types.InlineKeyboardMarkup(row_width=4)
+
+    like_btn = types.InlineKeyboardButton("👍", callback_data="like")
+    dislike_btn = types.InlineKeyboardButton("👎", callback_data="dislike")
+    copy_btn = types.InlineKeyboardButton("📋 نسخ", callback_data=f"copy:{result_text}")
+    share_btn = types.InlineKeyboardButton("🔗 مشاركة", switch_inline_query=result_text)
+
+    markup.add(like_btn, dislike_btn, copy_btn, share_btn)
+    return markup
+
+
+# رسالة البداية
 @bot.message_handler(commands=["start"])
 def start(message):
-    USERS.add(message.from_user.id)
-    bot.reply_to(
-        message,
-        "👋 مرحبًا بك في <b>Zentra AI</b>\n\n"
-        "🧪 اكتب عملية جمع للتجربة مثل:\n"
-        "<code>1+1</code>"
+    bot.send_message(
+        message.chat.id,
+        "👋 أهلاً بك\n\n"
+        "🧮 أرسل عملية جمع مثل:\n"
+        "<code>5+7</code>\n"
+        "<code>10 + 3</code>"
     )
 
-# ───────────────
-# حساب جمع الأرقام
-# ───────────────
-@bot.message_handler(func=lambda m: True)
-def handle_message(message):
-    global TOTAL_MESSAGES
-    TOTAL_MESSAGES += 1
-    USERS.add(message.from_user.id)
 
+# التقاط عمليات الجمع فقط
+@bot.message_handler(func=lambda m: True)
+def calculate(message):
     text = message.text.replace(" ", "")
 
-    # Regex للجمع فقط
-    match = re.fullmatch(r"(\d+)\+(\d+)", text)
-    if not match:
+    # تحقق من صيغة جمع فقط
+    if not re.fullmatch(r"\d+\+\d+", text):
+        bot.send_message(
+            message.chat.id,
+            "❌ الصيغة غير صحيحة\nمثال صحيح:\n<code>6+7</code>"
+        )
         return
 
-    a = int(match.group(1))
-    b = int(match.group(2))
-    result = a + b
+    a, b = text.split("+")
+    result = int(a) + int(b)
 
-    reply_text = f"🧮 <b>نتيجة العملية</b>\n\n{a} + {b} = <b>{result}</b>"
+    result_text = f"{a} + {b} = <b>{result}</b>"
 
-    keyboard = InlineKeyboardMarkup(row_width=4)
-    keyboard.add(
-        InlineKeyboardButton("👍 لايك", callback_data="like"),
-        InlineKeyboardButton("👎 دس لايك", callback_data="dislike"),
-        InlineKeyboardButton("📋 نسخ", callback_data=f"copy:{result}"),
-        InlineKeyboardButton("🔗 مشاركة", switch_inline_query=reply_text)
+    bot.send_message(
+        message.chat.id,
+        result_text,
+        reply_markup=action_buttons(result_text)
     )
 
-    bot.send_message(message.chat.id, reply_text, reply_markup=keyboard)
 
-# ───────────────
-# التعامل مع الأزرار
-# ───────────────
+# أزرار التفاعل
 @bot.callback_query_handler(func=lambda call: True)
 def callbacks(call):
     if call.data == "like":
-        bot.answer_callback_query(call.id, "👍 شكراً على اللايك")
+        bot.answer_callback_query(call.id, "👍 شكراً على التفاعل")
     elif call.data == "dislike":
-        bot.answer_callback_query(call.id, "👎 تم تسجيل الملاحظة")
+        bot.answer_callback_query(call.id, "👎 تم الاستلام")
     elif call.data.startswith("copy:"):
-        value = call.data.split(":")[1]
-        bot.answer_callback_query(call.id, f"📋 انسخ النتيجة: {value}", show_alert=True)
+        bot.answer_callback_query(call.id, "📋 انسخ النتيجة يدويًا")
 
-# ───────────────
-# إحصائيات البوت
-# ───────────────
-@bot.message_handler(commands=["stats"])
-def stats(message):
-    uptime = int(time.time() - START_TIME)
-    bot.reply_to(
-        message,
-        f"📊 <b>إحصائيات Zentra AI</b>\n\n"
-        f"👤 المستخدمون: {len(USERS)}\n"
-        f"💬 الرسائل: {TOTAL_MESSAGES}\n"
-        f"⏱ مدة التشغيل: {uptime} ثانية"
-    )
 
-print("Zentra AI Bot is running...")
+# تشغيل البوت (Polling فقط)
 bot.infinity_polling()
