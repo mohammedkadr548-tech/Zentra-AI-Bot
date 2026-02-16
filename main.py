@@ -1,3 +1,7 @@
+# ===============================
+# Zentra AI – Final Clean Version
+# ===============================
+
 import os
 import re
 import time
@@ -14,19 +18,31 @@ from telebot import types
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
+if not BOT_TOKEN:
+    raise Exception("BOT_TOKEN not set")
+if not OPENAI_API_KEY:
+    raise Exception("OPENAI_API_KEY not set")
+
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
-PAYMENT_URL = "https://nowpayments.io/payment/?iid=4711328085&order_id="
-SUBSCRIPTION_DAYS = 30
-FREE_DAILY_LIMIT = 3
+ADMIN_ID = 326193841
+BOT_START_TIME = time.time()
 
-TEXT_COST = 0.10
-IMAGE_COST = 0.40   # تكلفة الصورة (أعلى من النص)
+PAYMENT_URL = "https://nowpayments.io/payment/?iid=4711328085&order_id="
+
+SUBSCRIPTION_DAYS = 30
 SUBSCRIBER_BUDGET = 6.0
 
+FREE_DAILY_LIMIT = 3
+TEXT_COST = 0.10
+IMAGE_COST = 0.04
+
+CHANNEL_USERNAME = "@ZentraAI_Official"
+CHANNEL_LINK = "https://t.me/ZentraAI_Official"
+
 # ===============================
-# 2️⃣ Database
+# 2️⃣ Database (SQLite)
 # ===============================
 conn = sqlite3.connect("zentra_ai.db", check_same_thread=False)
 cursor = conn.cursor()
@@ -38,7 +54,9 @@ CREATE TABLE IF NOT EXISTS users (
     sub_end INTEGER DEFAULT 0,
     daily_used INTEGER DEFAULT 0,
     last_reset INTEGER DEFAULT 0,
-    budget REAL DEFAULT 0.0
+    budget REAL DEFAULT 0.0,
+    spent REAL DEFAULT 0.0,
+    joined_at INTEGER
 )
 """)
 conn.commit()
@@ -52,9 +70,9 @@ def get_user(user_id):
 
 def create_user(user_id):
     cursor.execute("""
-        INSERT OR IGNORE INTO users (user_id, last_reset)
-        VALUES (?, ?)
-    """, (user_id, now()))
+        INSERT OR IGNORE INTO users (user_id, joined_at, last_reset)
+        VALUES (?, ?, ?)
+    """, (user_id, now(), now()))
     conn.commit()
 
 def update(query, params):
@@ -74,117 +92,190 @@ def reset_daily(user):
 def is_subscribed(user):
     return user[1] == 1 and user[2] > now()
 
+def must_join_channel(user_id):
+    try:
+        m = bot.get_chat_member(CHANNEL_USERNAME, user_id)
+        return m.status in ["member", "administrator", "creator"]
+    except:
+        return False
+
+# ===============================
+# 4️⃣ Messages
+# ===============================
 def subscribe_message(uid):
     return (
         "🚀 Upgrade to Premium\n"
         "Subscribe to continue using Zentra AI.\n\n"
-        "🚀 الترقية للاشتراك المدفوع\n"
+        "🚀 الترقية إلى الاشتراك المدفوع\n"
         "اشترك لمتابعة استخدام Zentra AI.\n\n"
         f"🔗 {PAYMENT_URL}{uid}"
     )
 
-def budget_message():
+def budget_exceeded_message():
     return (
-        "⚠️ Budget exhausted\n"
+        "⚠️ Budget limit reached\n"
         "Please renew your subscription.\n\n"
         "⚠️ تم استهلاك الميزانية\n"
         "يرجى تجديد الاشتراك."
     )
 
 # ===============================
-# 4️⃣ AI Text
+# 5️⃣ AI
 # ===============================
 def ask_ai(prompt):
+    headers = {
+        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": "gpt-4o-mini",
+        "messages": [
+            {"role": "system", "content": "You are a helpful AI assistant."},
+            {"role": "user", "content": prompt}
+        ]
+    }
     r = requests.post(
         "https://api.openai.com/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {OPENAI_API_KEY}",
-            "Content-Type": "application/json"
-        },
-        json={
-            "model": "gpt-4o-mini",
-            "messages": [
-                {"role": "system", "content": "You are a helpful AI assistant."},
-                {"role": "user", "content": prompt}
-            ]
-        },
+        headers=headers,
+        json=payload,
         timeout=60
     )
+    r.raise_for_status()
     return r.json()["choices"][0]["message"]["content"]
 
 # ===============================
-# 5️⃣ Image Detection
+# 6️⃣ Image Detection
 # ===============================
-IMAGE_WORDS = ["image", "photo", "picture", "صورة", "ارسم", "صمم"]
+IMAGE_KEYWORDS = [
+    "image", "photo", "picture", "draw", "design",
+    "صورة", "ارسم", "صمم", "تصميم"
+]
 
 def is_image_request(text):
-    return any(w in text.lower() for w in IMAGE_WORDS)
+    t = text.lower()
+    return any(k in t for k in IMAGE_KEYWORDS)
 
 # ===============================
-# 6️⃣ Main Handler
+# 7️⃣ MAIN HANDLER (ONE ONLY)
 # ===============================
 @bot.message_handler(func=lambda m: True)
-def handle(message):
-    uid = message.from_user.id
+def handle_all(message):
+    user_id = message.from_user.id
     text = message.text or ""
 
-    create_user(uid)
-    user = get_user(uid)
+    create_user(user_id)
+    user = get_user(user_id)
     reset_daily(user)
 
-    # 🧪 Number Test
-    if re.match(r"^\s*\d+\s*\+\s*\d+\s*$", text):
-        a, b = map(int, text.split("+"))
-        bot.reply_to(message, f"✅ Result: {a+b}\n✅ النتيجة: {a+b}")
+    # ========= ADMIN COMMAND =========
+    if text.lower() == "zentra ai":
+        if user_id != ADMIN_ID:
+            return
+
+        cursor.execute("SELECT COUNT(*) FROM users")
+        total_users = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM users WHERE is_subscribed=1")
+        paid_users = cursor.fetchone()[0]
+
+        uptime = int((time.time() - BOT_START_TIME) / 60)
+
+        bot.send_message(
+            message.chat.id,
+            f"📊 Zentra AI – Admin Stats\n\n"
+            f"👥 Total users: {total_users}\n"
+            f"👑 Paid users: {paid_users}\n"
+            f"⏱ Uptime: {uptime} min\n\n"
+            f"📊 إحصائيات Zentra AI\n"
+            f"👥 المستخدمين: {total_users}\n"
+            f"👑 المشتركين: {paid_users}"
+        )
         return
 
-    # 🔓 Free user
+    # ========= NUMBER ADDITION (FREE TEST) =========
+    if re.match(r"^\s*\d+\s*\+\s*\d+\s*$", text):
+        a, b = map(int, text.split("+"))
+        bot.send_message(
+            message.chat.id,
+            f"✅ Result: {a+b}\n"
+            f"✅ النتيجة: {a+b}"
+        )
+        return
+
+    # ========= CHANNEL CHECK =========
+    if not must_join_channel(user_id):
+        kb = types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton("📢 Join Channel", url=CHANNEL_LINK))
+        bot.send_message(
+            message.chat.id,
+            "🚫 Please join the channel first.\n"
+            "🚫 يجب الاشتراك بالقناة أولًا.",
+            reply_markup=kb
+        )
+        return
+
+    # ========= FREE USER =========
     if not is_subscribed(user):
         if user[3] >= FREE_DAILY_LIMIT:
-            bot.reply_to(message, subscribe_message(uid))
+            bot.send_message(message.chat.id, subscribe_message(user_id))
             return
 
         update(
             "UPDATE users SET daily_used=daily_used+1 WHERE user_id=?",
-            (uid,)
+            (user_id,)
         )
-        bot.reply_to(message, "✅ Free request accepted\n✅ تم قبول الطلب المجاني")
+
+        bot.send_message(
+            message.chat.id,
+            "✅ Free request accepted\n"
+            "✅ تم قبول الطلب المجاني"
+        )
         return
 
-    # 👑 Subscriber
-    cost = IMAGE_COST if is_image_request(text) else TEXT_COST
+    # ========= SUBSCRIBER =========
+    is_image = is_image_request(text)
+    cost = IMAGE_COST if is_image else TEXT_COST
+
     if user[5] < cost:
-        bot.reply_to(message, budget_message())
+        bot.send_message(message.chat.id, budget_exceeded_message())
         return
 
     try:
-        answer = ask_ai(text)
+        reply = ask_ai(text)
         update(
-            "UPDATE users SET budget=budget-? WHERE user_id=?",
-            (cost, uid)
+            "UPDATE users SET budget=budget-?, spent=spent+? WHERE user_id=?",
+            (cost, cost, user_id)
         )
-        bot.reply_to(message, f"✅ Answer:\n{answer}\n\n✅ الإجابة:\n{answer}")
+        bot.send_message(
+            message.chat.id,
+            f"✅ Answer:\n{reply}\n\n"
+            f"✅ الإجابة:\n{reply}"
+        )
     except:
-        bot.reply_to(message, "❌ AI error\n❌ خطأ في الذكاء الاصطناعي")
+        bot.send_message(
+            message.chat.id,
+            "❌ AI service error\n"
+            "❌ خطأ في خدمة الذكاء الاصطناعي"
+        )
 
 # ===============================
-# 7️⃣ Webhook (NOWPayments)
+# 8️⃣ NOWPayments Webhook
 # ===============================
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.json
     if data and data.get("payment_status") == "finished":
-        uid = int(data["order_id"])
+        uid = int(data.get("order_id"))
         create_user(uid)
         update(
             "UPDATE users SET is_subscribed=1, sub_end=?, budget=? WHERE user_id=?",
-            (now()+SUBSCRIPTION_DAYS*86400, SUBSCRIBER_BUDGET, uid)
+            (now() + SUBSCRIPTION_DAYS * 86400, SUBSCRIBER_BUDGET, uid)
         )
         bot.send_message(uid, "🎉 Subscription activated\n🎉 تم تفعيل الاشتراك")
     return jsonify({"ok": True})
 
 # ===============================
-# 8️⃣ Run
+# 9️⃣ RUN
 # ===============================
 def run_flask():
     app.run(host="0.0.0.0", port=5000)
