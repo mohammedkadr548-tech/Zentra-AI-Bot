@@ -7,6 +7,7 @@ import telebot
 # Basic Setup
 # ======================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_ID = 326193841  # ← غيّرها إذا لزم
 
 if not BOT_TOKEN:
     raise Exception("❌ BOT_TOKEN is not set")
@@ -25,7 +26,10 @@ cursor = conn.cursor()
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
-    joined_at INTEGER
+    joined_at INTEGER,
+    total_messages INTEGER DEFAULT 0,
+    daily_messages INTEGER DEFAULT 0,
+    last_daily_reset INTEGER
 )
 """)
 conn.commit()
@@ -33,14 +37,52 @@ conn.commit()
 # ======================
 # Helper Functions
 # ======================
+def now():
+    return int(time.time())
+
 def user_exists(user_id: int) -> bool:
     cursor.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,))
     return cursor.fetchone() is not None
 
 def add_user(user_id: int):
     cursor.execute(
-        "INSERT OR IGNORE INTO users (user_id, joined_at) VALUES (?, ?)",
-        (user_id, int(time.time()))
+        """
+        INSERT OR IGNORE INTO users
+        (user_id, joined_at, last_daily_reset)
+        VALUES (?, ?, ?)
+        """,
+        (user_id, now(), now())
+    )
+    conn.commit()
+
+def reset_daily_if_needed(user_id: int):
+    cursor.execute(
+        "SELECT last_daily_reset FROM users WHERE user_id=?",
+        (user_id,)
+    )
+    row = cursor.fetchone()
+    if row and now() - row[0] >= 86400:
+        cursor.execute(
+            """
+            UPDATE users
+            SET daily_messages = 0,
+                last_daily_reset = ?
+            WHERE user_id = ?
+            """,
+            (now(), user_id)
+        )
+        conn.commit()
+
+def increase_message_count(user_id: int):
+    reset_daily_if_needed(user_id)
+    cursor.execute(
+        """
+        UPDATE users
+        SET total_messages = total_messages + 1,
+            daily_messages = daily_messages + 1
+        WHERE user_id = ?
+        """,
+        (user_id,)
     )
     conn.commit()
 
@@ -54,8 +96,6 @@ def start(message):
     if not user_exists(user_id):
         add_user(user_id)
 
-    # ❌ لا reply_to
-    # ✅ send_message فقط
     bot.send_message(
         message.chat.id,
         "👋 Welcome to Zentra AI\n"
@@ -71,9 +111,31 @@ def all_messages(message):
     if not user_exists(user_id):
         add_user(user_id)
 
-    # ❌ لا reply_to
-    # ❌ لا اقتباس
-    # ❌ لا اسم مستخدم
+    increase_message_count(user_id)
+
+    # 📊 أمر الإحصائيات (للأدمن فقط)
+    if message.text.lower() == "zentra ai" and user_id == ADMIN_ID:
+        cursor.execute("SELECT COUNT(*) FROM users")
+        total_users = cursor.fetchone()[0]
+
+        cursor.execute("SELECT SUM(total_messages) FROM users")
+        total_messages = cursor.fetchone()[0] or 0
+
+        uptime_minutes = int((time.time() - START_TIME) / 60)
+
+        bot.send_message(
+            message.chat.id,
+            f"📊 Zentra AI – Admin Stats\n"
+            f"👥 Total users: {total_users}\n"
+            f"✉️ Total messages: {total_messages}\n"
+            f"⏱ Uptime: {uptime_minutes} min\n\n"
+            f"📊 إحصائيات Zentra AI\n"
+            f"👥 المستخدمين: {total_users}\n"
+            f"✉️ الرسائل: {total_messages}\n"
+            f"⏱ مدة التشغيل: {uptime_minutes} دقيقة"
+        )
+        return
+
     bot.send_message(
         message.chat.id,
         "✅ Bot is active\n"
