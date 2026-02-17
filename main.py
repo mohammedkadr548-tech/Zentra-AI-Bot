@@ -146,3 +146,37 @@ def all_messages(message):
 # Run Bot
 # ======================
 bot.infinity_polling(skip_pending=True)
+# ======================
+# Stage 4 - Free AI Limit
+# ======================
+
+FREE_AI_LIMIT = 3  # عدد طلبات الذكاء الاصطناعي المجانية لكل مستخدم خلال 24 ساعة
+
+def can_use_free_ai(user_id: int) -> bool:
+    """
+    يتحقق هل المستخدم ما زال ضمن الحد المجاني للذكاء الاصطناعي
+    """
+    reset_daily_if_needed(user_id)
+
+    cursor.execute(
+        "SELECT daily_messages FROM users WHERE user_id = ?",
+        (user_id,)
+    )
+    row = cursor.fetchone()
+
+    if not row:
+        return False
+
+    return row[0] < FREE_AI_LIMIT
+
+
+def free_limit_message():
+    """
+    رسالة تظهر عند انتهاء الحد المجاني
+    """
+    return (
+        "🚫 Free AI limit reached\n"
+        "Subscribe to continue using AI features.\n\n"
+        "🚫 لقد انتهى الحد المجاني للذكاء الاصطناعي\n"
+        "اشترك لمتابعة استخدام الميزات."
+    )
