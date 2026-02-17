@@ -19,7 +19,7 @@ PAYMENT_URL = "https://nowpayments.io/payment/?iid=4711328085"
 
 FREE_AI_LIMIT = 3
 SUBSCRIPTION_DAYS = 30
-SUBSCRIBER_BUDGET = 6.0   # داخلي فقط – لا يظهر للمستخدم
+SUBSCRIBER_BUDGET = 6.0   # داخلي فقط
 AI_COST = 0.10            # خصم داخلي
 
 if not BOT_TOKEN:
@@ -85,10 +85,7 @@ def reset_daily_if_needed(user_id):
         conn.commit()
 
 def has_active_subscription(user_id):
-    cursor.execute(
-        "SELECT subscription_until FROM users WHERE user_id=?",
-        (user_id,)
-    )
+    cursor.execute("SELECT subscription_until FROM users WHERE user_id=?", (user_id,))
     row = cursor.fetchone()
     return row and row[0] > now()
 
@@ -104,46 +101,32 @@ def activate_subscription(user_id):
     return expire
 
 # ======================
-# Stage 11 — Payment Instructions
+# Messages
 # ======================
 def payment_instructions_message():
     return (
         "💳 Payment Instructions (Important)\n"
         "Send USDT via TRC20 network only.\n\n"
         "Supported platforms:\n"
-        "- Binance\n"
-        "- OKX\n"
-        "- Bybit\n"
-        "- Trust Wallet\n"
-        "- MetaMask\n\n"
-        "⚠️ Sending via a wrong network may result in loss of funds.\n\n"
+        "- Binance\n- OKX\n- Bybit\n- Trust Wallet\n- MetaMask\n\n"
+        "⚠️ Wrong network may cause loss of funds.\n\n"
         f"🔗 {PAYMENT_URL}\n\n"
         "----------------------------------\n"
         "💳 تعليمات الدفع (مهم)\n"
         "أرسل USDT عبر شبكة TRC20 فقط.\n\n"
-        "المنصات والمحافظ المدعومة:\n"
-        "- Binance\n"
-        "- OKX\n"
-        "- Bybit\n"
-        "- Trust Wallet\n"
-        "- MetaMask\n\n"
-        "⚠️ الإرسال عبر شبكة خاطئة قد يؤدي إلى فقدان الأموال.\n\n"
+        "المنصات المدعومة:\n"
+        "- Binance\n- OKX\n- Bybit\n- Trust Wallet\n- MetaMask\n\n"
+        "⚠️ الإرسال عبر شبكة خاطئة قد يؤدي لفقدان الأموال.\n\n"
         f"🔗 {PAYMENT_URL}"
     )
 
-# ======================
-# Messages
-# ======================
 def budget_exhausted_message():
     return (
         "✨ You’ve reached your monthly AI limit.\n"
-        "Thank you for using Zentra AI — you can renew anytime to continue.\n\n"
+        "Thank you for using Zentra AI — you can renew anytime.\n\n"
         "✨ لقد وصلت إلى الحد الشهري لاستخدام الذكاء الاصطناعي.\n"
-        "شكرًا لاستخدامك Zentra AI — يمكنك التجديد في أي وقت للمتابعة."
+        "شكرًا لاستخدامك Zentra AI — يمكنك التجديد في أي وقت."
     )
-
-def subscription_required_message():
-    return payment_instructions_message()
 
 def subscription_activated_message(expire):
     date = datetime.fromtimestamp(expire).strftime("%Y-%m-%d")
@@ -155,13 +138,7 @@ def subscription_activated_message(expire):
     )
 
 # ======================
-# Stage 5 — AI Detector
-# ======================
-def is_ai_request(text):
-    return text.lower().startswith("/ai")
-
-# ======================
-# Stage 8 — Math Detector
+# Math (Testing Only)
 # ======================
 def is_math_expression(text):
     return re.fullmatch(r"\s*\d+\s*[+\-*/]\s*\d+\s*", text)
@@ -170,19 +147,16 @@ def solve_math(text):
     try:
         a, op, b = re.findall(r"\d+|[+\-*/]", text)
         a, b = int(a), int(b)
-        if op == "+": return a + b
-        if op == "-": return a - b
-        if op == "*": return a * b
-        if op == "/": return a / b
+        return eval(f"{a}{op}{b}")
     except:
         return None
 
 # ======================
-# Stage 9 — OpenAI Engine
+# OpenAI
 # ======================
 def call_openai(prompt):
     try:
-        response = openai.ChatCompletion.create(
+        res = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "You are a helpful AI assistant."},
@@ -191,30 +165,24 @@ def call_openai(prompt):
             max_tokens=500,
             temperature=0.7
         )
-        return response.choices[0].message["content"].strip()
+        return res.choices[0].message["content"].strip()
     except:
-        return (
-            "❌ AI Error\n"
-            "Try again later.\n\n"
-            "❌ حدث خطأ في الذكاء الاصطناعي\n"
-            "حاول لاحقًا"
-        )
+        return "❌ AI Error\nTry again later.\n\n❌ حدث خطأ في الذكاء الاصطناعي"
 
 # ======================
 # Handlers
 # ======================
 @bot.message_handler(commands=["start"])
 def start(message):
-    uid = message.from_user.id
-    if not user_exists(uid):
-        add_user(uid)
+    if not user_exists(message.from_user.id):
+        add_user(message.from_user.id)
 
     bot.send_message(
         message.chat.id,
         "👋 Welcome to Zentra AI\n"
-        "✅ Bot is active\n\n"
+        "🤖 Just write anything and I’ll reply.\n\n"
         "👋 مرحبًا بك في Zentra AI\n"
-        "✅ البوت يعمل بشكل صحيح"
+        "🤖 اكتب أي شيء وسأرد عليك مباشرة"
     )
 
 @bot.message_handler(func=lambda m: True)
@@ -225,98 +193,66 @@ def all_messages(message):
     if not user_exists(uid):
         add_user(uid)
 
-    # Admin Stats
+    # Admin stats
     if text.lower() == "zentra ai" and uid == ADMIN_ID:
         cursor.execute("SELECT COUNT(*) FROM users")
         users = cursor.fetchone()[0]
         cursor.execute("SELECT SUM(total_messages) FROM users")
-        messages = cursor.fetchone()[0] or 0
+        msgs = cursor.fetchone()[0] or 0
         uptime = int((time.time() - START_TIME) / 60)
 
         bot.send_message(
             message.chat.id,
-            f"📊 Zentra AI – Admin Stats\n"
-            f"👥 Users: {users}\n"
-            f"✉️ Messages: {messages}\n"
-            f"⏱ Uptime: {uptime} min\n\n"
-            f"📊 إحصائيات Zentra AI\n"
-            f"👥 المستخدمين: {users}\n"
-            f"✉️ الرسائل: {messages}\n"
-            f"⏱ مدة التشغيل: {uptime} دقيقة"
+            f"📊 Users: {users}\n✉️ Messages: {msgs}\n⏱ Uptime: {uptime} min"
         )
         return
 
-    # Math
+    # Math test
     if is_math_expression(text):
         result = solve_math(text)
         if result is not None:
-            bot.send_message(
-                message.chat.id,
-                f"🧮 Result: {result}\n🧮 النتيجة: {result}"
-            )
+            bot.send_message(message.chat.id, f"🧮 Result: {result}")
             return
 
-    # AI
-    if is_ai_request(text):
-        reset_daily_if_needed(uid)
-        cursor.execute("SELECT daily_ai, budget FROM users WHERE user_id=?", (uid,))
-        daily_used, budget = cursor.fetchone()
+    # ===== AI DEFAULT =====
+    reset_daily_if_needed(uid)
 
-        if not has_active_subscription(uid):
-            if daily_used >= FREE_AI_LIMIT:
-                bot.send_message(message.chat.id, subscription_required_message())
-                return
-        else:
-            if budget <= 0:
-                bot.send_message(message.chat.id, budget_exhausted_message())
-                return
+    cursor.execute("SELECT daily_ai, budget FROM users WHERE user_id=?", (uid,))
+    daily_used, budget = cursor.fetchone()
 
-        cursor.execute("""
-            UPDATE users
-            SET daily_ai = daily_ai + 1,
-                total_messages = total_messages + 1,
-                budget = CASE
-                    WHEN budget > 0 THEN budget - ?
-                    ELSE budget
-                END
-            WHERE user_id=?
-        """, (AI_COST, uid))
-        conn.commit()
+    if not has_active_subscription(uid):
+        if daily_used >= FREE_AI_LIMIT:
+            bot.send_message(message.chat.id, payment_instructions_message())
+            return
+    else:
+        if budget <= 0:
+            bot.send_message(message.chat.id, budget_exhausted_message())
+            return
 
-        reply = call_openai(text[3:].strip())
-        bot.send_message(message.chat.id, reply)
-        return
-
-    # Normal message
-    cursor.execute(
-        "UPDATE users SET total_messages = total_messages + 1 WHERE user_id=?",
-        (uid,)
-    )
+    cursor.execute("""
+        UPDATE users
+        SET daily_ai = daily_ai + 1,
+            total_messages = total_messages + 1,
+            budget = CASE WHEN budget > 0 THEN budget - ? ELSE budget END
+        WHERE user_id=?
+    """, (AI_COST, uid))
     conn.commit()
 
-    bot.send_message(
-        message.chat.id,
-        "✅ Bot is active\n"
-        "✅ البوت يعمل بشكل صحيح"
-    )
+    reply = call_openai(text)
+    bot.send_message(message.chat.id, reply)
 
 # ======================
-# Stage 7 — NOWPayments Webhook
+# Webhook
 # ======================
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.json
-    if not data:
-        return jsonify({"ok": False})
-
-    if data.get("payment_status") == "finished":
-        user_id = int(data.get("order_id"))
-        if not user_exists(user_id):
-            add_user(user_id)
-
-        expire = activate_subscription(user_id)
-        bot.send_message(user_id, subscription_activated_message(expire))
-
+    if data and data.get("payment_status") == "finished":
+        uid = int(data.get("order_id"))
+        if not user_exists(uid):
+            add_user(uid)
+        expire = activate_subscription(uid)
+        bot.send_message(uid, subscription_activated_message(expire))
     return jsonify({"ok": True})
 
 # ======================
