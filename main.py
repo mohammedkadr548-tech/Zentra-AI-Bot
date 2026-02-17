@@ -277,3 +277,44 @@ def all_messages(message):
         "✅ Bot is active\n"
         "✅ البوت يعمل بشكل صحيح"
     )   
+    # ======================
+# Stage 6 - Subscription Activation (30 Days)
+# ======================
+
+from datetime import datetime
+
+SUBSCRIPTION_DAYS = 30  # مدة الاشتراك بالأيام
+
+
+def activate_subscription(user_id: int) -> int:
+    """
+    تفعيل اشتراك المستخدم لمدة 30 يوم
+    ترجع وقت الانتهاء (timestamp)
+    """
+    expire_time = now() + (SUBSCRIPTION_DAYS * 86400)
+
+    cursor.execute(
+        """
+        UPDATE users
+        SET subscription_until = ?
+        WHERE user_id = ?
+        """,
+        (expire_time, user_id)
+    )
+    conn.commit()
+
+    return expire_time
+
+
+def subscription_activated_message(expire_time: int) -> str:
+    """
+    رسالة تأكيد تفعيل الاشتراك (EN ثم AR)
+    """
+    expire_date = datetime.fromtimestamp(expire_time).strftime("%Y-%m-%d")
+
+    return (
+        "✅ Subscription activated successfully\n"
+        f"🕒 Valid until: {expire_date}\n\n"
+        "✅ تم تفعيل اشتراكك الشهري بنجاح\n"
+        f"🕒 ينتهي بتاريخ: {expire_date}"
+    )
