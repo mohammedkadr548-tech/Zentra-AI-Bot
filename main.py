@@ -180,3 +180,100 @@ def free_limit_message():
         "🚫 لقد انتهى الحد المجاني للذكاء الاصطناعي\n"
         "اشترك لمتابعة استخدام الميزات."
     )
+ # ======================
+# Stage 5 - AI Access + Subscription Gate
+# ======================
+
+PAYMENT_URL = "https://nowpayments.io/payment/?iid=4711328085"
+FREE_AI_LIMIT = 3  # عدد رسائل الذكاء الاصطناعي المجانية
+
+def is_ai_request(message_text: str) -> bool:
+    """
+    نعتبر أي رسالة تبدأ بـ /ai طلب ذكاء اصطناعي
+    مثال:
+    /ai hello
+    """
+    return message_text.lower().startswith("/ai")
+
+
+def has_free_ai(user_id: int) -> bool:
+    reset_daily_if_needed(user_id)
+    cursor.execute(
+        "SELECT daily_messages FROM users WHERE user_id = ?",
+        (user_id,)
+    )
+    row = cursor.fetchone()
+    if not row:
+        return False
+    return row[0] < FREE_AI_LIMIT
+
+
+def subscription_message():
+    return (
+        "🚫 Free AI limit reached\n"
+        "Subscribe to continue using AI features:\n"
+        f"{PAYMENT_URL}\n\n"
+        "🚫 لقد انتهى الحد المجاني للذكاء الاصطناعي\n"
+        "اشترك لمتابعة استخدام الميزات:\n"
+        f"{PAYMENT_URL}"
+    )
+
+
+# 🔁 نعدل الهاندلر الحالي (لا تنشئ واحد جديد)
+@bot.message_handler(func=lambda m: True)
+def all_messages(message):
+    user_id = message.from_user.id
+    text = message.text or ""
+
+    if not user_exists(user_id):
+        add_user(user_id)
+
+    # 📊 إحصائيات الأدمن
+    if text.lower() == "zentra ai" and user_id == ADMIN_ID:
+        cursor.execute("SELECT COUNT(*) FROM users")
+        total_users = cursor.fetchone()[0]
+
+        cursor.execute("SELECT SUM(total_messages) FROM users")
+        total_messages = cursor.fetchone()[0] or 0
+
+        uptime_minutes = int((time.time() - START_TIME) / 60)
+
+        bot.send_message(
+            message.chat.id,
+            f"📊 Zentra AI – Admin Stats\n"
+            f"👥 Total users: {total_users}\n"
+            f"✉️ Total messages: {total_messages}\n"
+            f"⏱ Uptime: {uptime_minutes} min\n\n"
+            f"📊 إحصائيات Zentra AI\n"
+            f"👥 المستخدمين: {total_users}\n"
+            f"✉️ الرسائل: {total_messages}\n"
+            f"⏱ مدة التشغيل: {uptime_minutes} دقيقة"
+        )
+        return
+
+    # 🤖 طلب ذكاء اصطناعي
+    if is_ai_request(text):
+        if not has_free_ai(user_id):
+            bot.send_message(
+                message.chat.id,
+                subscription_message()
+            )
+            return
+
+        # خصم رسالة ذكاء اصطناعي
+        increase_message_count(user_id)
+
+        # 🔹 رد مؤقت (لاحقًا نربطه بالذكاء الاصطناعي الحقيقي)
+        bot.send_message(
+            message.chat.id,
+            "🤖 AI response\n"
+            "تم استلام طلب الذكاء الاصطناعي"
+        )
+        return
+
+    # 💬 رسالة عادية (لا تُحسب على الذكاء الاصطناعي)
+    bot.send_message(
+        message.chat.id,
+        "✅ Bot is active\n"
+        "✅ البوت يعمل بشكل صحيح"
+    )   
