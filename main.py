@@ -1,13 +1,18 @@
 import os
 import time
 import sqlite3
+from datetime import datetime
 import telebot
 
 # ======================
 # Basic Setup
 # ======================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = 326193841  # ← غيّرها إذا لزم
+ADMIN_ID = 326193841  # غيّره إذا لزم
+PAYMENT_URL = "https://nowpayments.io/payment/?iid=4711328085"
+
+FREE_AI_LIMIT = 3          # عدد رسائل الذكاء الاصطناعي المجانية
+SUBSCRIPTION_DAYS = 30     # مدة الاشتراك بالأيام
 
 if not BOT_TOKEN:
     raise Exception("❌ BOT_TOKEN is not set")
@@ -29,7 +34,8 @@ CREATE TABLE IF NOT EXISTS users (
     joined_at INTEGER,
     total_messages INTEGER DEFAULT 0,
     daily_messages INTEGER DEFAULT 0,
-    last_daily_reset INTEGER
+    last_daily_reset INTEGER,
+    subscription_until INTEGER DEFAULT 0
 )
 """)
 conn.commit()
@@ -45,46 +51,77 @@ def user_exists(user_id: int) -> bool:
     return cursor.fetchone() is not None
 
 def add_user(user_id: int):
-    cursor.execute(
-        """
+    cursor.execute("""
         INSERT OR IGNORE INTO users
         (user_id, joined_at, last_daily_reset)
         VALUES (?, ?, ?)
-        """,
-        (user_id, now(), now())
-    )
+    """, (user_id, now(), now()))
     conn.commit()
 
 def reset_daily_if_needed(user_id: int):
     cursor.execute(
-        "SELECT last_daily_reset FROM users WHERE user_id=?",
+        "SELECT last_daily_reset FROM users WHERE user_id = ?",
         (user_id,)
     )
     row = cursor.fetchone()
     if row and now() - row[0] >= 86400:
-        cursor.execute(
-            """
+        cursor.execute("""
             UPDATE users
             SET daily_messages = 0,
                 last_daily_reset = ?
             WHERE user_id = ?
-            """,
-            (now(), user_id)
-        )
+        """, (now(), user_id))
         conn.commit()
 
 def increase_message_count(user_id: int):
     reset_daily_if_needed(user_id)
-    cursor.execute(
-        """
+    cursor.execute("""
         UPDATE users
         SET total_messages = total_messages + 1,
             daily_messages = daily_messages + 1
         WHERE user_id = ?
-        """,
+    """, (user_id,))
+    conn.commit()
+
+def has_active_subscription(user_id: int) -> bool:
+    cursor.execute(
+        "SELECT subscription_until FROM users WHERE user_id = ?",
         (user_id,)
     )
+    row = cursor.fetchone()
+    return row and row[0] > now()
+
+def activate_subscription(user_id: int) -> int:
+    expire_time = now() + (SUBSCRIPTION_DAYS * 86400)
+    cursor.execute("""
+        UPDATE users
+        SET subscription_until = ?
+        WHERE user_id = ?
+    """, (expire_time, user_id))
     conn.commit()
+    return expire_time
+
+def subscription_activated_message(expire_time: int) -> str:
+    expire_date = datetime.fromtimestamp(expire_time).strftime("%Y-%m-%d")
+    return (
+        "✅ Subscription activated successfully\n"
+        f"📅 Valid until: {expire_date}\n\n"
+        "✅ تم تفعيل الاشتراك بنجاح\n"
+        f"📅 ينتهي بتاريخ: {expire_date}"
+    )
+
+def is_ai_request(text: str) -> bool:
+    return text.lower().startswith("/ai")
+
+def subscription_required_message() -> str:
+    return (
+        "🚫 Free AI limit reached\n"
+        "Subscribe to continue using AI features:\n"
+        f"{PAYMENT_URL}\n\n"
+        "🚫 لقد انتهى الحد المجاني للذكاء الاصطناعي\n"
+        "اشترك لمتابعة استخدام الميزات:\n"
+        f"{PAYMENT_URL}"
+    )
 
 # ======================
 # Handlers
@@ -92,7 +129,6 @@ def increase_message_count(user_id: int):
 @bot.message_handler(commands=["start"])
 def start(message):
     user_id = message.from_user.id
-
     if not user_exists(user_id):
         add_user(user_id)
 
@@ -107,128 +143,14 @@ def start(message):
 @bot.message_handler(func=lambda m: True)
 def all_messages(message):
     user_id = message.from_user.id
-
-    if not user_exists(user_id):
-        add_user(user_id)
-
-    increase_message_count(user_id)
-
-    # 📊 أمر الإحصائيات (للأدمن فقط)
-    if message.text.lower() == "zentra ai" and user_id == ADMIN_ID:
-        cursor.execute("SELECT COUNT(*) FROM users")
-        total_users = cursor.fetchone()[0]
-
-        cursor.execute("SELECT SUM(total_messages) FROM users")
-        total_messages = cursor.fetchone()[0] or 0
-
-        uptime_minutes = int((time.time() - START_TIME) / 60)
-
-        bot.send_message(
-            message.chat.id,
-            f"📊 Zentra AI – Admin Stats\n"
-            f"👥 Total users: {total_users}\n"
-            f"✉️ Total messages: {total_messages}\n"
-            f"⏱ Uptime: {uptime_minutes} min\n\n"
-            f"📊 إحصائيات Zentra AI\n"
-            f"👥 المستخدمين: {total_users}\n"
-            f"✉️ الرسائل: {total_messages}\n"
-            f"⏱ مدة التشغيل: {uptime_minutes} دقيقة"
-        )
-        return
-
-    bot.send_message(
-        message.chat.id,
-        "✅ Bot is active\n"
-        "✅ البوت يعمل بشكل صحيح"
-    )
-
-# ======================
-# Run Bot
-# ======================
-bot.infinity_polling(skip_pending=True)
-# ======================
-# Stage 4 - Free AI Limit
-# ======================
-
-FREE_AI_LIMIT = 3  # عدد طلبات الذكاء الاصطناعي المجانية لكل مستخدم خلال 24 ساعة
-
-def can_use_free_ai(user_id: int) -> bool:
-    """
-    يتحقق هل المستخدم ما زال ضمن الحد المجاني للذكاء الاصطناعي
-    """
-    reset_daily_if_needed(user_id)
-
-    cursor.execute(
-        "SELECT daily_messages FROM users WHERE user_id = ?",
-        (user_id,)
-    )
-    row = cursor.fetchone()
-
-    if not row:
-        return False
-
-    return row[0] < FREE_AI_LIMIT
-
-
-def free_limit_message():
-    """
-    رسالة تظهر عند انتهاء الحد المجاني
-    """
-    return (
-        "🚫 Free AI limit reached\n"
-        "Subscribe to continue using AI features.\n\n"
-        "🚫 لقد انتهى الحد المجاني للذكاء الاصطناعي\n"
-        "اشترك لمتابعة استخدام الميزات."
-    )
- # ======================
-# Stage 5 - AI Access + Subscription Gate
-# ======================
-
-PAYMENT_URL = "https://nowpayments.io/payment/?iid=4711328085"
-FREE_AI_LIMIT = 3  # عدد رسائل الذكاء الاصطناعي المجانية
-
-def is_ai_request(message_text: str) -> bool:
-    """
-    نعتبر أي رسالة تبدأ بـ /ai طلب ذكاء اصطناعي
-    مثال:
-    /ai hello
-    """
-    return message_text.lower().startswith("/ai")
-
-
-def has_free_ai(user_id: int) -> bool:
-    reset_daily_if_needed(user_id)
-    cursor.execute(
-        "SELECT daily_messages FROM users WHERE user_id = ?",
-        (user_id,)
-    )
-    row = cursor.fetchone()
-    if not row:
-        return False
-    return row[0] < FREE_AI_LIMIT
-
-
-def subscription_message():
-    return (
-        "🚫 Free AI limit reached\n"
-        "Subscribe to continue using AI features:\n"
-        f"{PAYMENT_URL}\n\n"
-        "🚫 لقد انتهى الحد المجاني للذكاء الاصطناعي\n"
-        "اشترك لمتابعة استخدام الميزات:\n"
-        f"{PAYMENT_URL}"
-    )
-
-
-# 🔁 نعدل الهاندلر الحالي (لا تنشئ واحد جديد)
-@bot.message_handler(func=lambda m: True)
-def all_messages(message):
-    user_id = message.from_user.id
     text = message.text or ""
 
     if not user_exists(user_id):
         add_user(user_id)
 
-    # 📊 إحصائيات الأدمن
+    # ======================
+    # Admin Stats
+    # ======================
     if text.lower() == "zentra ai" and user_id == ADMIN_ID:
         cursor.execute("SELECT COUNT(*) FROM users")
         total_users = cursor.fetchone()[0]
@@ -251,16 +173,25 @@ def all_messages(message):
         )
         return
 
-    # 🤖 طلب ذكاء اصطناعي
+    # ======================
+    # AI Request
+    # ======================
     if is_ai_request(text):
-        if not has_free_ai(user_id):
-            bot.send_message(
-                message.chat.id,
-                subscription_message()
+        if not has_active_subscription(user_id):
+            reset_daily_if_needed(user_id)
+            cursor.execute(
+                "SELECT daily_messages FROM users WHERE user_id = ?",
+                (user_id,)
             )
-            return
+            used = cursor.fetchone()[0]
 
-        # خصم رسالة ذكاء اصطناعي
+            if used >= FREE_AI_LIMIT:
+                bot.send_message(
+                    message.chat.id,
+                    subscription_required_message()
+                )
+                return
+
         increase_message_count(user_id)
 
         # 🔹 رد مؤقت (لاحقًا نربطه بالذكاء الاصطناعي الحقيقي)
@@ -271,50 +202,16 @@ def all_messages(message):
         )
         return
 
-    # 💬 رسالة عادية (لا تُحسب على الذكاء الاصطناعي)
+    # ======================
+    # Normal Message
+    # ======================
     bot.send_message(
         message.chat.id,
         "✅ Bot is active\n"
         "✅ البوت يعمل بشكل صحيح"
-    )   
-    # ======================
-# Stage 6 - Subscription Activation (30 Days)
+    )
+
 # ======================
-
-from datetime import datetime
-
-SUBSCRIPTION_DAYS = 30  # مدة الاشتراك بالأيام
-
-
-def activate_subscription(user_id: int) -> int:
-    """
-    تفعيل اشتراك المستخدم لمدة 30 يوم
-    ترجع وقت الانتهاء (timestamp)
-    """
-    expire_time = now() + (SUBSCRIPTION_DAYS * 86400)
-
-    cursor.execute(
-        """
-        UPDATE users
-        SET subscription_until = ?
-        WHERE user_id = ?
-        """,
-        (expire_time, user_id)
-    )
-    conn.commit()
-
-    return expire_time
-
-
-def subscription_activated_message(expire_time: int) -> str:
-    """
-    رسالة تأكيد تفعيل الاشتراك (EN ثم AR)
-    """
-    expire_date = datetime.fromtimestamp(expire_time).strftime("%Y-%m-%d")
-
-    return (
-        "✅ Subscription activated successfully\n"
-        f"🕒 Valid until: {expire_date}\n\n"
-        "✅ تم تفعيل اشتراكك الشهري بنجاح\n"
-        f"🕒 ينتهي بتاريخ: {expire_date}"
-    )
+# Run Bot
+# ======================
+bot.infinity_polling(skip_pending=True)
