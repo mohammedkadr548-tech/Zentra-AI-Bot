@@ -5,6 +5,7 @@ from datetime import datetime
 from flask import Flask, request, jsonify
 import telebot
 import threading
+import re
 
 # ======================
 # Stage 1 — Basic Setup
@@ -114,13 +115,34 @@ def subscription_activated_message(expire):
     )
 
 # ======================
-# Stage 5 + 6 — AI Gate
+# Stage 5 — AI Detector
 # ======================
 def is_ai_request(text):
     return text.lower().startswith("/ai")
 
 # ======================
-# Handlers (ONE ONLY)
+# Stage 8 — Math Detector
+# ======================
+def is_math_expression(text):
+    return re.fullmatch(r"\s*\d+\s*[\+\-\*/]\s*\d+\s*", text)
+
+def solve_math(text):
+    try:
+        a, op, b = re.findall(r"\d+|[\+\-\*/]", text)
+        a, b = int(a), int(b)
+        if op == "+":
+            return a + b
+        if op == "-":
+            return a - b
+        if op == "*":
+            return a * b
+        if op == "/":
+            return a / b
+    except:
+        return None
+
+# ======================
+# Handlers
 # ======================
 @bot.message_handler(commands=["start"])
 def start(message):
@@ -170,16 +192,26 @@ def all_messages(message):
         return
 
     # ======================
+    # Stage 8 — Math
+    # ======================
+    if is_math_expression(text):
+        result = solve_math(text)
+        if result is not None:
+            bot.send_message(
+                message.chat.id,
+                f"🧮 Result: {result}\n"
+                f"🧮 النتيجة: {result}"
+            )
+            return
+
+    # ======================
     # AI Requests
     # ======================
     if is_ai_request(text):
         reset_daily_if_needed(uid)
 
         if not has_active_subscription(uid):
-            cursor.execute(
-                "SELECT daily_ai FROM users WHERE user_id=?",
-                (uid,)
-            )
+            cursor.execute("SELECT daily_ai FROM users WHERE user_id=?", (uid,))
             used = cursor.fetchone()[0]
 
             if used >= FREE_AI_LIMIT:
@@ -231,10 +263,7 @@ def webhook():
             add_user(user_id)
 
         expire = activate_subscription(user_id)
-        bot.send_message(
-            user_id,
-            subscription_activated_message(expire)
-        )
+        bot.send_message(user_id, subscription_activated_message(expire))
 
     return jsonify({"ok": True})
 
