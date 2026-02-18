@@ -5,8 +5,8 @@ from datetime import datetime
 from flask import Flask, request, jsonify
 import telebot
 import threading
-import re
-import openai
+import base64
+from openai import OpenAI
 
 # ======================
 # Stage 1 — Basic Setup
@@ -19,17 +19,15 @@ PAYMENT_URL = "https://nowpayments.io/payment/?iid=4711328085"
 
 FREE_AI_LIMIT = 3
 SUBSCRIPTION_DAYS = 30
-SUBSCRIBER_BUDGET = 6.0   # داخلي فقط
-AI_COST = 0.10            # خصم داخلي
+SUBSCRIBER_BUDGET = 6.0
+AI_COST = 0.10
 
-if not BOT_TOKEN:
-    raise Exception("BOT_TOKEN is not set")
-if not OPENAI_API_KEY:
-    raise Exception("OPENAI_API_KEY is not set")
-
-openai.api_key = OPENAI_API_KEY
+if not BOT_TOKEN or not OPENAI_API_KEY:
+    raise Exception("Missing ENV variables")
 
 bot = telebot.TeleBot(BOT_TOKEN)
+client = OpenAI(api_key=OPENAI_API_KEY)
+
 app = Flask(__name__)
 START_TIME = time.time()
 
@@ -60,103 +58,92 @@ conn.commit()
 def now():
     return int(time.time())
 
-def user_exists(user_id):
-    cursor.execute("SELECT 1 FROM users WHERE user_id=?", (user_id,))
+def user_exists(uid):
+    cursor.execute("SELECT 1 FROM users WHERE user_id=?", (uid,))
     return cursor.fetchone() is not None
 
-def add_user(user_id):
+def add_user(uid):
     cursor.execute("""
         INSERT OR IGNORE INTO users
         (user_id, joined_at, last_daily_reset, budget)
         VALUES (?, ?, ?, ?)
-    """, (user_id, now(), now(), 0.0))
+    """, (uid, now(), now(), 0.0))
     conn.commit()
 
-def reset_daily_if_needed(user_id):
-    cursor.execute("SELECT last_daily_reset FROM users WHERE user_id=?", (user_id,))
+def reset_daily_if_needed(uid):
+    cursor.execute("SELECT last_daily_reset FROM users WHERE user_id=?", (uid,))
     row = cursor.fetchone()
     if row and now() - row[0] >= 86400:
         cursor.execute("""
             UPDATE users
-            SET daily_ai = 0,
-                last_daily_reset = ?
-            WHERE user_id = ?
-        """, (now(), user_id))
+            SET daily_ai=0, last_daily_reset=?
+            WHERE user_id=?
+        """, (now(), uid))
         conn.commit()
 
-def has_active_subscription(user_id):
-    cursor.execute("SELECT subscription_until FROM users WHERE user_id=?", (user_id,))
+def has_subscription(uid):
+    cursor.execute("SELECT subscription_until FROM users WHERE user_id=?", (uid,))
     row = cursor.fetchone()
     return row and row[0] > now()
 
-def activate_subscription(user_id):
+def activate_subscription(uid):
     expire = now() + SUBSCRIPTION_DAYS * 86400
     cursor.execute("""
         UPDATE users
-        SET subscription_until=?,
-            budget=?
+        SET subscription_until=?, budget=?
         WHERE user_id=?
-    """, (expire, SUBSCRIBER_BUDGET, user_id))
+    """, (expire, SUBSCRIBER_BUDGET, uid))
     conn.commit()
     return expire
 
 # ======================
 # Messages
 # ======================
-def payment_instructions_message():
+def payment_message():
     return (
-        "💳 Payment Instructions (Important)\n"
-        "Send USDT via TRC20 network only.\n\n"
-        "Supported platforms:\n"
+        "💳 Payment Instructions\n"
+        "Send USDT via TRC20 only.\n\n"
+        "Supported:\n"
         "- Binance\n- OKX\n- Bybit\n- Trust Wallet\n- MetaMask\n\n"
-        "⚠️ Wrong network may cause loss of funds.\n\n"
-        f"🔗 {PAYMENT_URL}\n\n"
-        "----------------------------------\n"
-        "💳 تعليمات الدفع (مهم)\n"
-        "أرسل USDT عبر شبكة TRC20 فقط.\n\n"
-        "المنصات المدعومة:\n"
-        "- Binance\n- OKX\n- Bybit\n- Trust Wallet\n- MetaMask\n\n"
-        "⚠️ الإرسال عبر شبكة خاطئة قد يؤدي لفقدان الأموال.\n\n"
-        f"🔗 {PAYMENT_URL}"
+        f"{PAYMENT_URL}\n\n"
+        "------------------\n"
+        "💳 تعليمات الدفع\n"
+        "أرسل USDT عبر TRC20 فقط.\n\n"
+        f"{PAYMENT_URL}"
     )
 
-def budget_exhausted_message():
+def budget_done():
     return (
         "✨ You’ve reached your monthly AI limit.\n"
-        "Thank you for using Zentra AI — you can renew anytime.\n\n"
-        "✨ لقد وصلت إلى الحد الشهري لاستخدام الذكاء الاصطناعي.\n"
-        "شكرًا لاستخدامك Zentra AI — يمكنك التجديد في أي وقت."
-    )
-
-def subscription_activated_message(expire):
-    date = datetime.fromtimestamp(expire).strftime("%Y-%m-%d")
-    return (
-        "✅ Subscription activated successfully\n"
-        f"📅 Valid until: {date}\n\n"
-        "✅ تم تفعيل الاشتراك بنجاح\n"
-        f"📅 ينتهي بتاريخ: {date}"
+        "You can renew anytime.\n\n"
+        "✨ لقد وصلت إلى الحد الشهري.\n"
+        "يمكنك التجديد في أي وقت."
     )
 
 # ======================
-# OpenAI
+# OpenAI — Text + Vision
 # ======================
-def call_openai(prompt):
-    try:
-        res = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "You are a helpful, clear, friendly AI assistant."},
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=500,
-            temperature=0.7
-        )
-        return res.choices[0].message["content"].strip()
-    except:
-        return (
-            "❌ AI Error\nTry again later.\n\n"
-            "❌ حدث خطأ في الذكاء الاصطناعي\nحاول لاحقًا"
-        )
+def ask_ai(text, image_bytes=None):
+    content = []
+
+    if text:
+        content.append({"type": "text", "text": text})
+
+    if image_bytes:
+        b64 = base64.b64encode(image_bytes).decode()
+        content.append({
+            "type": "input_image",
+            "image_base64": b64
+        })
+
+    response = client.responses.create(
+        model="gpt-4.1",
+        input=[{
+            "role": "user",
+            "content": content
+        }]
+    )
+    return response.output_text
 
 # ======================
 # Handlers
@@ -170,17 +157,14 @@ def start(message):
     bot.send_message(
         message.chat.id,
         "👋 Welcome to Zentra AI\n"
-        "🤖 Just write and I’ll reply.\n\n"
+        "🤖 Just write or send a photo.\n\n"
         "👋 مرحبًا بك في Zentra AI\n"
-        "🤖 اكتب أي شيء وسأرد\n"
-        "مباشرة"
+        "🤖 اكتب أو أرسل صورة وسأرد"
     )
 
-@bot.message_handler(func=lambda m: True)
+@bot.message_handler(content_types=["text", "photo"])
 def all_messages(message):
     uid = message.from_user.id
-    text = message.text or ""
-
     if not user_exists(uid):
         add_user(uid)
 
@@ -188,14 +172,22 @@ def all_messages(message):
     cursor.execute("SELECT daily_ai, budget FROM users WHERE user_id=?", (uid,))
     daily_used, budget = cursor.fetchone()
 
-    if not has_active_subscription(uid):
+    if not has_subscription(uid):
         if daily_used >= FREE_AI_LIMIT:
-            bot.send_message(message.chat.id, payment_instructions_message())
+            bot.send_message(message.chat.id, payment_message())
             return
     else:
         if budget <= 0:
-            bot.send_message(message.chat.id, budget_exhausted_message())
+            bot.send_message(message.chat.id, budget_done())
             return
+
+    image_bytes = None
+    text = message.text or ""
+
+    if message.photo:
+        file_id = message.photo[-1].file_id
+        file_info = bot.get_file(file_id)
+        image_bytes = bot.download_file(file_info.file_path)
 
     cursor.execute("""
         UPDATE users
@@ -206,7 +198,7 @@ def all_messages(message):
     """, (AI_COST, uid))
     conn.commit()
 
-    reply = call_openai(text)
+    reply = ask_ai(text, image_bytes)
     bot.send_message(message.chat.id, reply)
 
 # ======================
@@ -220,7 +212,7 @@ def webhook():
         if not user_exists(uid):
             add_user(uid)
         expire = activate_subscription(uid)
-        bot.send_message(uid, subscription_activated_message(expire))
+        bot.send_message(uid, f"✅ Subscription active until {datetime.fromtimestamp(expire).date()}")
     return jsonify({"ok": True})
 
 # ======================
