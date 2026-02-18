@@ -5,8 +5,7 @@ from datetime import datetime
 from flask import Flask, request, jsonify
 import telebot
 import threading
-import base64
-from openai import OpenAI
+import openai
 
 # ======================
 # Stage 1 — Basic Setup
@@ -14,27 +13,23 @@ from openai import OpenAI
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
+if not BOT_TOKEN or not OPENAI_API_KEY:
+    raise RuntimeError("Missing BOT_TOKEN or OPENAI_API_KEY")
+
+openai.api_key = OPENAI_API_KEY
+
 ADMIN_ID = 326193841
 PAYMENT_URL = "https://nowpayments.io/payment/?iid=4711328085"
 
 FREE_AI_LIMIT = 3
 SUBSCRIPTION_DAYS = 30
-SUBSCRIBER_BUDGET = 6.0
-AI_COST = 0.10
+SUBSCRIBER_BUDGET = 6.0  # داخلي فقط
 
-if not BOT_TOKEN or not OPENAI_API_KEY:
-    raise Exception("Missing ENV variables")
-
-bot = telebot.TeleBot(BOT_TOKEN)
-client = OpenAI(api_key=OPENAI_API_KEY)
-
+bot = telebot.TeleBot(BOT_TOKEN, threaded=True)
 app = Flask(__name__)
-START_TIME = time.time()
-
-print("Zentra AI bot started")
 
 # ======================
-# Database
+# Stage 2 — Database
 # ======================
 conn = sqlite3.connect("bot.db", check_same_thread=False)
 cursor = conn.cursor()
@@ -43,7 +38,6 @@ cursor.execute("""
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
     joined_at INTEGER,
-    total_messages INTEGER DEFAULT 0,
     daily_ai INTEGER DEFAULT 0,
     last_daily_reset INTEGER,
     subscription_until INTEGER DEFAULT 0,
@@ -53,30 +47,25 @@ CREATE TABLE IF NOT EXISTS users (
 conn.commit()
 
 # ======================
-# Helpers
+# Stage 3 — Helpers
 # ======================
 def now():
     return int(time.time())
-
-def user_exists(uid):
-    cursor.execute("SELECT 1 FROM users WHERE user_id=?", (uid,))
-    return cursor.fetchone() is not None
 
 def add_user(uid):
     cursor.execute("""
         INSERT OR IGNORE INTO users
         (user_id, joined_at, last_daily_reset, budget)
-        VALUES (?, ?, ?, ?)
-    """, (uid, now(), now(), 0.0))
+        VALUES (?, ?, ?, 0)
+    """, (uid, now(), now()))
     conn.commit()
 
-def reset_daily_if_needed(uid):
+def reset_daily(uid):
     cursor.execute("SELECT last_daily_reset FROM users WHERE user_id=?", (uid,))
     row = cursor.fetchone()
     if row and now() - row[0] >= 86400:
         cursor.execute("""
-            UPDATE users
-            SET daily_ai=0, last_daily_reset=?
+            UPDATE users SET daily_ai=0, last_daily_reset=?
             WHERE user_id=?
         """, (now(), uid))
         conn.commit()
@@ -89,137 +78,162 @@ def has_subscription(uid):
 def activate_subscription(uid):
     expire = now() + SUBSCRIPTION_DAYS * 86400
     cursor.execute("""
-        UPDATE users
-        SET subscription_until=?, budget=?
+        UPDATE users SET subscription_until=?, budget=?
         WHERE user_id=?
     """, (expire, SUBSCRIBER_BUDGET, uid))
     conn.commit()
     return expire
 
 # ======================
-# Messages
+# Stage 4 — Messages
 # ======================
+WELCOME_MESSAGE = (
+    "👋 Welcome to Zentra AI\n"
+    "🤖 Just write anything and I’ll reply.\n\n"
+    "👋 مرحبًا بك في Zentra AI\n"
+    "🤖 اكتب أي شيء وسأرد عليك مباشرة"
+)
+
 def payment_message():
     return (
-        "💳 Payment Instructions\n"
-        "Send USDT via TRC20 only.\n\n"
-        "Supported:\n"
-        "- Binance\n- OKX\n- Bybit\n- Trust Wallet\n- MetaMask\n\n"
+        "💳 Subscribe to continue using Zentra AI\n"
         f"{PAYMENT_URL}\n\n"
-        "------------------\n"
-        "💳 تعليمات الدفع\n"
-        "أرسل USDT عبر TRC20 فقط.\n\n"
+        "💳 اشترك لمتابعة استخدام Zentra AI\n"
         f"{PAYMENT_URL}"
     )
 
-def budget_done():
+def budget_end_message():
     return (
         "✨ You’ve reached your monthly AI limit.\n"
-        "You can renew anytime.\n\n"
+        "Thank you for using Zentra AI.\n\n"
         "✨ لقد وصلت إلى الحد الشهري.\n"
-        "يمكنك التجديد في أي وقت."
+        "شكرًا لاستخدامك Zentra AI."
     )
 
 # ======================
-# OpenAI — Text + Vision
+# Stage 5 — OpenAI (Text)
 # ======================
-def ask_ai(text, image_bytes=None):
-    content = []
-
-    if text:
-        content.append({"type": "text", "text": text})
-
-    if image_bytes:
-        b64 = base64.b64encode(image_bytes).decode()
-        content.append({
-            "type": "input_image",
-            "image_base64": b64
-        })
-
-    response = client.responses.create(
-        model="gpt-4.1",
-        input=[{
-            "role": "user",
-            "content": content
-        }]
-    )
-    return response.output_text
+def call_ai_text(prompt):
+    try:
+        res = openai.ChatCompletion.create(
+            model="gpt-4.1-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=700
+        )
+        reply = res.choices[0].message["content"]
+        cost = (res.usage.total_tokens / 1000) * 0.002
+        return reply, cost
+    except:
+        return "❌ AI error\n\n❌ خطأ في الذكاء الاصطناعي", 0
 
 # ======================
-# Handlers
+# Stage 6 — OpenAI (Image)
+# ======================
+def call_ai_image(image_url, prompt):
+    try:
+        res = openai.ChatCompletion.create(
+            model="gpt-4.1-mini",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": image_url}}
+                    ]
+                }
+            ],
+            max_tokens=700
+        )
+        reply = res.choices[0].message["content"]
+        cost = (res.usage.total_tokens / 1000) * 0.002
+        return reply, cost
+    except:
+        return "❌ Image analysis error\n\n❌ خطأ في تحليل الصورة", 0
+
+# ======================
+# Stage 7 — Handlers
 # ======================
 @bot.message_handler(commands=["start"])
 def start(message):
+    add_user(message.from_user.id)
+    bot.send_message(message.chat.id, WELCOME_MESSAGE)
+
+@bot.message_handler(content_types=["photo"])
+def handle_photo(message):
     uid = message.from_user.id
-    if not user_exists(uid):
-        add_user(uid)
+    add_user(uid)
+    reset_daily(uid)
 
-    bot.send_message(
-        message.chat.id,
-        "👋 Welcome to Zentra AI\n"
-        "🤖 Just write or send a photo.\n\n"
-        "👋 مرحبًا بك في Zentra AI\n"
-        "🤖 اكتب أو أرسل صورة وسأرد"
-    )
-
-@bot.message_handler(content_types=["text", "photo"])
-def all_messages(message):
-    uid = message.from_user.id
-    if not user_exists(uid):
-        add_user(uid)
-
-    reset_daily_if_needed(uid)
     cursor.execute("SELECT daily_ai, budget FROM users WHERE user_id=?", (uid,))
-    daily_used, budget = cursor.fetchone()
+    daily, budget = cursor.fetchone()
 
-    if not has_subscription(uid):
-        if daily_used >= FREE_AI_LIMIT:
-            bot.send_message(message.chat.id, payment_message())
-            return
-    else:
-        if budget <= 0:
-            bot.send_message(message.chat.id, budget_done())
-            return
+    if not has_subscription(uid) and daily >= FREE_AI_LIMIT:
+        bot.send_message(message.chat.id, payment_message())
+        return
+    if has_subscription(uid) and budget <= 0:
+        bot.send_message(message.chat.id, budget_end_message())
+        return
 
-    image_bytes = None
-    text = message.text or ""
+    file_id = message.photo[-1].file_id
+    file_info = bot.get_file(file_id)
+    image_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}"
 
-    if message.photo:
-        file_id = message.photo[-1].file_id
-        file_info = bot.get_file(file_id)
-        image_bytes = bot.download_file(file_info.file_path)
+    prompt = message.caption or "Explain this image"
+    reply, cost = call_ai_image(image_url, prompt)
 
     cursor.execute("""
         UPDATE users
-        SET daily_ai = daily_ai + 1,
-            total_messages = total_messages + 1,
-            budget = CASE WHEN budget > 0 THEN budget - ? ELSE budget END
+        SET daily_ai=daily_ai+1,
+            budget=CASE WHEN budget>0 THEN budget-? ELSE budget END
         WHERE user_id=?
-    """, (AI_COST, uid))
+    """, (cost, uid))
     conn.commit()
 
-    reply = ask_ai(text, image_bytes)
+    bot.send_message(message.chat.id, reply)
+
+@bot.message_handler(func=lambda m: True)
+def handle_text(message):
+    uid = message.from_user.id
+    add_user(uid)
+    reset_daily(uid)
+
+    cursor.execute("SELECT daily_ai, budget FROM users WHERE user_id=?", (uid,))
+    daily, budget = cursor.fetchone()
+
+    if not has_subscription(uid) and daily >= FREE_AI_LIMIT:
+        bot.send_message(message.chat.id, payment_message())
+        return
+    if has_subscription(uid) and budget <= 0:
+        bot.send_message(message.chat.id, budget_end_message())
+        return
+
+    reply, cost = call_ai_text(message.text)
+
+    cursor.execute("""
+        UPDATE users
+        SET daily_ai=daily_ai+1,
+            budget=CASE WHEN budget>0 THEN budget-? ELSE budget END
+        WHERE user_id=?
+    """, (cost, uid))
+    conn.commit()
+
     bot.send_message(message.chat.id, reply)
 
 # ======================
-# Webhook
+# Stage 8 — Webhook & Run
 # ======================
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.json
     if data and data.get("payment_status") == "finished":
         uid = int(data.get("order_id"))
-        if not user_exists(uid):
-            add_user(uid)
-        expire = activate_subscription(uid)
-        bot.send_message(uid, f"✅ Subscription active until {datetime.fromtimestamp(expire).date()}")
-    return jsonify({"ok": True})
+        add_user(uid)
+        activate_subscription(uid)
+        bot.send_message(uid, "✅ Subscription activated\n\n✅ تم تفعيل الاشتراك")
+    return jsonify(ok=True)
 
-# ======================
-# Run
-# ======================
 def run_flask():
     app.run(host="0.0.0.0", port=5000)
 
-threading.Thread(target=run_flask).start()
+threading.Thread(target=run_flask, daemon=True).start()
 bot.infinity_polling(skip_pending=True)
