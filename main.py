@@ -36,7 +36,7 @@ START_TIME = time.time()
 print("Zentra AI bot started")
 
 # ======================
-# Stage 3 — Database
+# Database
 # ======================
 conn = sqlite3.connect("bot.db", check_same_thread=False)
 cursor = conn.cursor()
@@ -138,20 +138,6 @@ def subscription_activated_message(expire):
     )
 
 # ======================
-# Math (Testing Only)
-# ======================
-def is_math_expression(text):
-    return re.fullmatch(r"\s*\d+\s*[+\-*/]\s*\d+\s*", text)
-
-def solve_math(text):
-    try:
-        a, op, b = re.findall(r"\d+|[+\-*/]", text)
-        a, b = int(a), int(b)
-        return eval(f"{a}{op}{b}")
-    except:
-        return None
-
-# ======================
 # OpenAI
 # ======================
 def call_openai(prompt):
@@ -159,7 +145,7 @@ def call_openai(prompt):
         res = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "You are a helpful AI assistant."},
+                {"role": "system", "content": "You are a helpful, clear, friendly AI assistant."},
                 {"role": "user", "content": prompt}
             ],
             max_tokens=500,
@@ -167,22 +153,27 @@ def call_openai(prompt):
         )
         return res.choices[0].message["content"].strip()
     except:
-        return "❌ AI Error\nTry again later.\n\n❌ حدث خطأ في الذكاء الاصطناعي"
+        return (
+            "❌ AI Error\nTry again later.\n\n"
+            "❌ حدث خطأ في الذكاء الاصطناعي\nحاول لاحقًا"
+        )
 
 # ======================
 # Handlers
 # ======================
 @bot.message_handler(commands=["start"])
 def start(message):
-    if not user_exists(message.from_user.id):
-        add_user(message.from_user.id)
+    uid = message.from_user.id
+    if not user_exists(uid):
+        add_user(uid)
 
     bot.send_message(
         message.chat.id,
         "👋 Welcome to Zentra AI\n"
-        "🤖 Just write anything and I’ll reply.\n\n"
+        "🤖 Just write and I’ll reply.\n\n"
         "👋 مرحبًا بك في Zentra AI\n"
-        "🤖 اكتب أي شيء وسأرد عليك مباشرة"
+        "🤖 اكتب أي شيء وسأرد\n"
+        "مباشرة"
     )
 
 @bot.message_handler(func=lambda m: True)
@@ -193,30 +184,7 @@ def all_messages(message):
     if not user_exists(uid):
         add_user(uid)
 
-    # Admin stats
-    if text.lower() == "zentra ai" and uid == ADMIN_ID:
-        cursor.execute("SELECT COUNT(*) FROM users")
-        users = cursor.fetchone()[0]
-        cursor.execute("SELECT SUM(total_messages) FROM users")
-        msgs = cursor.fetchone()[0] or 0
-        uptime = int((time.time() - START_TIME) / 60)
-
-        bot.send_message(
-            message.chat.id,
-            f"📊 Users: {users}\n✉️ Messages: {msgs}\n⏱ Uptime: {uptime} min"
-        )
-        return
-
-    # Math test
-    if is_math_expression(text):
-        result = solve_math(text)
-        if result is not None:
-            bot.send_message(message.chat.id, f"🧮 Result: {result}")
-            return
-
-    # ===== AI DEFAULT =====
     reset_daily_if_needed(uid)
-
     cursor.execute("SELECT daily_ai, budget FROM users WHERE user_id=?", (uid,))
     daily_used, budget = cursor.fetchone()
 
