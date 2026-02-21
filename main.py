@@ -1,5 +1,8 @@
 import os
 import time
+import json
+import hmac
+import hashlib
 import sqlite3
 from datetime import datetime
 from flask import Flask, request, jsonify
@@ -12,13 +15,13 @@ import openai
 # ======================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+NOWPAYMENTS_IPN_SECRET = os.getenv("NOWPAYMENTS_IPN_SECRET")
 
-if not BOT_TOKEN or not OPENAI_API_KEY:
-    raise RuntimeError("Missing BOT_TOKEN or OPENAI_API_KEY")
+if not BOT_TOKEN or not OPENAI_API_KEY or not NOWPAYMENTS_IPN_SECRET:
+    raise RuntimeError("Missing environment variables")
 
 openai.api_key = OPENAI_API_KEY
 
-ADMIN_ID = 326193841
 PAYMENT_URL = "https://nowpayments.io/payment/?iid=4711328085"
 
 FREE_AI_LIMIT = 3
@@ -82,7 +85,6 @@ def activate_subscription(uid):
         WHERE user_id=?
     """, (expire, SUBSCRIBER_BUDGET, uid))
     conn.commit()
-    return expire
 
 # ======================
 # Stage 4 — Messages
@@ -96,18 +98,16 @@ WELCOME_MESSAGE = (
 
 def payment_message():
     return (
-        "💳 Subscribe to continue using Zentra AI\n"
+        "💳 Subscribe to continue using Zentra AI (USDT TRC20 only)\n"
         f"{PAYMENT_URL}\n\n"
-        "💳 اشترك لمتابعة استخدام Zentra AI\n"
+        "💳 اشترك لمتابعة استخدام Zentra AI (USDT TRC20 فقط)\n"
         f"{PAYMENT_URL}"
     )
 
 def budget_end_message():
     return (
-        "✨ You’ve reached your monthly AI limit.\n"
-        "Thank you for using Zentra AI.\n\n"
-        "✨ لقد وصلت إلى الحد الشهري.\n"
-        "شكرًا لاستخدامك Zentra AI."
+        "✨ You’ve reached your monthly AI limit.\n\n"
+        "✨ لقد وصلت إلى الحد الشهري."
     )
 
 # ======================
@@ -124,7 +124,7 @@ def call_ai_text(prompt):
         cost = (res.usage.total_tokens / 1000) * 0.002
         return reply, cost
     except:
-        return "❌ AI error\n\n❌ خطأ في الذكاء الاصطناعي", 0
+        return "❌ AI Error\n\n❌ خطأ في الذكاء الاصطناعي", 0
 
 # ======================
 # Stage 6 — OpenAI (Image)
@@ -148,10 +148,10 @@ def call_ai_image(image_url, prompt):
         cost = (res.usage.total_tokens / 1000) * 0.002
         return reply, cost
     except:
-        return "❌ Image analysis error\n\n❌ خطأ في تحليل الصورة", 0
+        return "❌ Image Error\n\n❌ خطأ في تحليل الصورة", 0
 
 # ======================
-# Stage 7 — Handlers
+# Stage 7 — Telegram Handlers
 # ======================
 @bot.message_handler(commands=["start"])
 def start(message):
@@ -174,11 +174,10 @@ def handle_photo(message):
         bot.send_message(message.chat.id, budget_end_message())
         return
 
-    file_id = message.photo[-1].file_id
-    file_info = bot.get_file(file_id)
-    image_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}"
-
+    file = bot.get_file(message.photo[-1].file_id)
+    image_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file.file_path}"
     prompt = message.caption or "Explain this image"
+
     reply, cost = call_ai_image(image_url, prompt)
 
     cursor.execute("""
@@ -220,18 +219,35 @@ def handle_text(message):
     bot.send_message(message.chat.id, reply)
 
 # ======================
-# Stage 8 — Webhook & Run
+# Stage 8 — NOWPayments Webhook (Secure)
 # ======================
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    data = request.json
-    if data and data.get("payment_status") == "finished":
+    raw_body = request.data
+    received_sig = request.headers.get("x-nowpayments-sig")
+
+    expected_sig = hmac.new(
+        NOWPAYMENTS_IPN_SECRET.encode(),
+        raw_body,
+        hashlib.sha512
+    ).hexdigest()
+
+    if not hmac.compare_digest(expected_sig, received_sig or ""):
+        return jsonify({"ok": False}), 403
+
+    data = json.loads(raw_body)
+
+    if data.get("payment_status") == "finished":
         uid = int(data.get("order_id"))
         add_user(uid)
         activate_subscription(uid)
         bot.send_message(uid, "✅ Subscription activated\n\n✅ تم تفعيل الاشتراك")
-    return jsonify(ok=True)
 
+    return jsonify({"ok": True})
+
+# ======================
+# Run
+# ======================
 def run_flask():
     app.run(host="0.0.0.0", port=5000)
 
