@@ -4,7 +4,6 @@ import json
 import hmac
 import hashlib
 import sqlite3
-from datetime import datetime
 from flask import Flask, request, jsonify
 import telebot
 import threading
@@ -22,11 +21,12 @@ if not BOT_TOKEN or not OPENAI_API_KEY or not NOWPAYMENTS_IPN_SECRET:
 
 openai.api_key = OPENAI_API_KEY
 
+# رابط الدفع (يسمح بعدة عملات)
 PAYMENT_URL = "https://nowpayments.io/payment/?iid=4711328085"
 
 FREE_AI_LIMIT = 3
 SUBSCRIPTION_DAYS = 30
-SUBSCRIBER_BUDGET = 6.0  # داخلي فقط
+SUBSCRIBER_BUDGET = 6.0
 
 bot = telebot.TeleBot(BOT_TOKEN, threaded=True)
 app = Flask(__name__)
@@ -98,9 +98,15 @@ WELCOME_MESSAGE = (
 
 def payment_message():
     return (
-        "💳 Subscribe to continue using Zentra AI (USDT TRC20 only)\n"
+        "💳 Subscribe to Zentra AI\n\n"
+        "You can pay using:\n"
+        "• USDT (TRC20 / ERC20 / BSC)\n"
+        "• BTC\n"
+        "• LTC\n"
+        "• Any available crypto\n\n"
         f"{PAYMENT_URL}\n\n"
-        "💳 اشترك لمتابعة استخدام Zentra AI (USDT TRC20 فقط)\n"
+        "💳 اشترك في Zentra AI\n"
+        "اختر أي عملة متاحة للدفع\n\n"
         f"{PAYMENT_URL}"
     )
 
@@ -111,7 +117,7 @@ def budget_end_message():
     )
 
 # ======================
-# Stage 5 — OpenAI (Text)
+# Stage 5 — OpenAI Text
 # ======================
 def call_ai_text(prompt):
     try:
@@ -127,7 +133,7 @@ def call_ai_text(prompt):
         return "❌ AI Error\n\n❌ خطأ في الذكاء الاصطناعي", 0
 
 # ======================
-# Stage 6 — OpenAI (Image)
+# Stage 6 — OpenAI Image
 # ======================
 def call_ai_image(image_url, prompt):
     try:
@@ -170,6 +176,7 @@ def handle_photo(message):
     if not has_subscription(uid) and daily >= FREE_AI_LIMIT:
         bot.send_message(message.chat.id, payment_message())
         return
+
     if has_subscription(uid) and budget <= 0:
         bot.send_message(message.chat.id, budget_end_message())
         return
@@ -202,6 +209,7 @@ def handle_text(message):
     if not has_subscription(uid) and daily >= FREE_AI_LIMIT:
         bot.send_message(message.chat.id, payment_message())
         return
+
     if has_subscription(uid) and budget <= 0:
         bot.send_message(message.chat.id, budget_end_message())
         return
