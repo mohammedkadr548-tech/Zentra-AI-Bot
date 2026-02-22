@@ -1,4 +1,4 @@
-pyTelegramBotAPI
-Flask
-requests
-openai
+pyTelegramBotAPI==4.15.4
+Flask==3.0.0
+requests==2.31.0
+openai==0.28.1
