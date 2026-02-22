@@ -4,14 +4,14 @@ import json
 import hmac
 import hashlib
 import sqlite3
-import threading
 import requests
 from flask import Flask, request, jsonify
 import telebot
+import threading
 import openai
 
 # ======================
-# Stage 1 — ENV
+# ENV
 # ======================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -24,7 +24,7 @@ if not all([BOT_TOKEN, OPENAI_API_KEY, NOWPAYMENTS_API_KEY, NOWPAYMENTS_IPN_SECR
 openai.api_key = OPENAI_API_KEY
 
 # ======================
-# Stage 2 — CONSTANTS
+# CONSTANTS
 # ======================
 PRICE_USD = 10
 SUBSCRIPTION_DAYS = 30
@@ -34,11 +34,11 @@ SUBSCRIBER_BUDGET = 6.0
 NOWPAYMENTS_CREATE_PAYMENT = "https://api.nowpayments.io/v1/payment"
 WEBHOOK_URL = "https://zentra-ai-bot-production.up.railway.app/webhook"
 
-bot = telebot.TeleBot(BOT_TOKEN, threaded=True)
+bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
 app = Flask(__name__)
 
 # ======================
-# Stage 3 — DATABASE
+# DATABASE
 # ======================
 conn = sqlite3.connect("bot.db", check_same_thread=False)
 cursor = conn.cursor()
@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS users (
 conn.commit()
 
 # ======================
-# Stage 4 — HELPERS
+# HELPERS
 # ======================
 def now():
     return int(time.time())
@@ -93,7 +93,7 @@ def activate_subscription(uid):
     conn.commit()
 
 # ======================
-# Stage 5 — CREATE PAYMENT API
+# CREATE PAYMENT API
 # ======================
 def create_payment(uid):
     headers = {
@@ -106,16 +106,16 @@ def create_payment(uid):
         "price_currency": "usd",
         "pay_currency": "usdttrc20",
         "order_id": str(uid),
-        "order_description": "Zentra AI — 30 Days Subscription",
+        "order_description": "Zentra AI - 30 Days Subscription",
         "ipn_callback_url": WEBHOOK_URL
     }
 
-    r = requests.post(NOWPAYMENTS_CREATE_PAYMENT, headers=headers, json=payload)
+    r = requests.post(NOWPAYMENTS_CREATE_PAYMENT, headers=headers, json=payload, timeout=20)
     data = r.json()
     return data.get("invoice_url")
 
 # ======================
-# Stage 6 — MESSAGES
+# MESSAGES
 # ======================
 WELCOME_MESSAGE = (
     "👋 Welcome to Zentra AI\n"
@@ -126,15 +126,17 @@ WELCOME_MESSAGE = (
 
 def payment_message(uid):
     url = create_payment(uid)
+    if not url:
+        return "❌ Payment service unavailable, try later"
     return (
-        "💳 Subscribe for 30 days — 10 USDT (TRC20)\n"
+        "💳 30 Days Subscription — 10 USDT (TRC20)\n"
         f"{url}\n\n"
-        "💳 اشترك لمدة 30 يوم — 10 USDT (TRC20)\n"
+        "💳 اشتراك 30 يوم — 10 USDT (TRC20)\n"
         f"{url}"
     )
 
 # ======================
-# Stage 7 — AI
+# AI
 # ======================
 def call_ai_text(prompt):
     res = openai.ChatCompletion.create(
@@ -147,7 +149,7 @@ def call_ai_text(prompt):
     return reply, cost
 
 # ======================
-# Stage 8 — TELEGRAM
+# TELEGRAM HANDLERS
 # ======================
 @bot.message_handler(commands=["start"])
 def start(message):
@@ -184,7 +186,7 @@ def handle_text(message):
     bot.send_message(message.chat.id, reply)
 
 # ======================
-# Stage 9 — NOWPayments Webhook
+# NOWPAYMENTS WEBHOOK
 # ======================
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -211,7 +213,7 @@ def webhook():
     return jsonify({"ok": True})
 
 # ======================
-# Stage 10 — RUN
+# RUN
 # ======================
 def run_flask():
     app.run(host="0.0.0.0", port=5000)
