@@ -7,61 +7,52 @@ import telebot
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 if not BOT_TOKEN:
-    raise RuntimeError("Missing BOT_TOKEN")
+    raise RuntimeError("BOT_TOKEN is missing")
 
 bot = telebot.TeleBot(BOT_TOKEN, threaded=True)
 
 # ======================
-# SMART REPLIES
+# SMART REPLY ENGINE
 # ======================
 def smart_reply(text: str) -> str:
     t = text.lower()
 
-    # برمجة
-    if any(word in t for word in ["برمجة", "كود", "بايثون", "python", "html", "css", "api"]):
+    if any(w in t for w in ["برمجة", "كود", "python", "بايثون", "api", "html"]):
         return (
-            "💻 يبدو أنك تسأل عن البرمجة\n\n"
-            "ابدأ بلغة Python لأنها سهلة وقوية،\n"
-            "وسنفعّل الشرح الذكي قريبًا 🤖\n\n"
-            "💻 Programming question detected\n"
-            "Smart AI replies coming soon 🚀"
+            "💻 سؤال برمجة تم استقباله\n\n"
+            "ابدأ بتعلم Python لأنها الأسهل والأقوى\n"
+            "وسيتم تفعيل الذكاء الاصطناعي قريبًا 🤖\n\n"
+            "💻 Programming mode active"
         )
 
-    # تقنية
-    if any(word in t for word in ["تقنية", "هاتف", "اندرويد", "iphone", "انترنت", "vpn"]):
-        return (
-            "📱 سؤالك تقني\n\n"
-            "تابع التحديثات، سيتم توفير شرح ذكي قريبًا\n\n"
-            "📱 Tech question detected\n"
-            "AI-powered answers coming soon"
-        )
-
-    # دين
-    if any(word in t for word in ["دين", "اسلام", "صلاة", "قرآن", "الله"]):
-        return (
-            "📿 سؤالك ديني\n\n"
-            "قال رسول الله ﷺ: «الدين النصيحة»\n"
-            "وسنضيف مصادر موثوقة قريبًا\n\n"
-            "📿 Religious question detected"
-        )
-
-    # كيف / ما هو
-    if any(word in t for word in ["كيف", "ما هو", "شرح", "تعلم", "what", "how"]):
+    if any(w in t for w in ["كيف", "ما هو", "شرح", "تعلم", "how", "what"]):
         return (
             "❓ سؤال ممتاز\n\n"
-            "حاليًا أقدّم ردود عامة،\n"
-            "وسيتم تفعيل الذكاء الاصطناعي قريبًا 🤖\n\n"
-            "❓ Good question\n"
-            "Full AI answers coming soon"
+            "حاليًا أعمل بوضع تجريبي ذكي\n"
+            "وسيتم تفعيل الرد بالذكاء الاصطناعي قريبًا 🚀\n\n"
+            "❓ Smart reply active"
         )
 
-    # رد عام
+    if any(w in t for w in ["دين", "اسلام", "صلاة", "الله", "قرآن"]):
+        return (
+            "📿 سؤال ديني\n\n"
+            "الدين النصيحة 🤍\n"
+            "وسيتم إضافة مصادر موثوقة لاحقًا\n\n"
+            "📿 Religious mode active"
+        )
+
+    if any(w in t for w in ["vpn", "هاتف", "اندرويد", "iphone", "تقنية"]):
+        return (
+            "📱 سؤال تقني\n\n"
+            "تابع التحديثات، سيتم تفعيل الشرح الذكي قريبًا\n\n"
+            "📱 Tech mode active"
+        )
+
     return (
         "👋 مرحبًا بك في Zentra AI\n\n"
-        "حاليًا أعمل بوضع تجريبي 🤍\n"
-        "وسنفعّل الذكاء الاصطناعي قريبًا\n\n"
-        "👋 Welcome to Zentra AI\n"
-        "Smart AI coming very soon 🚀"
+        "حاليًا أعمل بوضع تجريبي ذكي 🤍\n"
+        "وسيتم تفعيل الذكاء الاصطناعي قريبًا جدًا\n\n"
+        "👋 Welcome to Zentra AI"
     )
 
 # ======================
@@ -72,9 +63,9 @@ def start(message):
     bot.send_message(
         message.chat.id,
         "👋 Welcome to Zentra AI\n"
-        "🤖 Smart replies are active\n\n"
+        "🤖 Smart mode is active\n\n"
         "👋 مرحبًا بك في Zentra AI\n"
-        "🤖 الردود الذكية مفعلة"
+        "🤖 الوضع الذكي التجريبي مفعّل"
     )
 
 @bot.message_handler(func=lambda m: True)
@@ -85,5 +76,5 @@ def all_messages(message):
 # ======================
 # RUN
 # ======================
-print("Zentra AI (Smart Mode) is running...")
+print("Zentra AI is running (Smart Mode)...")
 bot.infinity_polling(skip_pending=True)
